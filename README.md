@@ -3,6 +3,7 @@
 This is the official repository of [HGN](https://arxiv.org/abs/1911.03631) (EMNLP 2020).
 
 ## Requirements
+
 We provide Docker image for easier reproduction. Please use `Dockerfile` or pull image directly.
 ```bash
 docker pull studyfang/hgn:latest
@@ -15,6 +16,7 @@ docker run --gpus all -it -v /datadrive_c/yuwfan:/ssd -it studyfang/hgn:latest b
 ```
 
 ## Quick Start
+
 *NOTE*: Please make sure you have set up the environment correctly. 
 
 1. Download raw data and our preprocessed data. 
@@ -24,7 +26,7 @@ bash scripts/download_data.sh
 
 2. Inference
 
-We provide roberta-large and albert-xxlarge-v2 w2 finetuned model for inference directly.
+We provide roberta-large and albert-xxlarge-v2 finetuned model for inference directly.
 Please run
 ```
 python predict.py --config_file configs/predict.roberta.json
@@ -52,6 +54,7 @@ joint_f1 = 0.7573679775376975
 Please refer to Preprocess and training section if you want to reproduce other steps.
 
 ## Preprocess
+
 Please set DATA_ROOT in preprocess.sh for your usage, otherwise data will be downloaded to the currect directory.
 
 To download and preprocess the data, please run
@@ -65,6 +68,7 @@ bash run.sh preprocess
 ```
 
 ## Training
+
 Please set your home data folder `HOME_DATA_FOLDER` in envs.py.
 
 And then run
@@ -95,17 +99,16 @@ We thank them for open-sourcing their projects.
 
 
 ## Citation
+
 If you use this code useful, please star our repo or consider citing:
 ```
-@inproceedings{fang2020HGN,
-  title={Hierarchical Graph Network for Multi-hop Question Answering,
-  author={Yuwei Fang, Siqi Sun, Zhe Gan, Rohit Pillai, Shuohang Wang, Jingjing Liu},
-  booktitle={EMNLP},
-  year={2020}
+@article{fang2019hierarchical,
+  title={Hierarchical graph network for multi-hop question answering},
+  author={Fang, Yuwei and Sun, Siqi and Gan, Zhe and Pillai, Rohit and Wang, Shuohang and Liu, Jingjing},
+  journal={arXiv preprint arXiv:1911.03631},
+  year={2019}
 }
 ```
-
-
 
 ## License
 
