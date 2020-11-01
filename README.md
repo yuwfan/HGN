@@ -22,17 +22,34 @@ docker run --gpus all -it -v /datadrive_c/yuwfan:/ssd -it studyfang/hgn:latest b
 bash scripts/download_data.sh
 ```
 
-2. Model training
+2. Inference
+
+We provide roberta-large and albert-xxlarge-v2 w2 finetuned model for inference directly.
+Please run
 ```
-python train.py --config_file configs/train.roberta.json
+python predict.py --config_file configs/predict.roberta.json
 ```
 
-3. Inference
+You may get the following results on the dev set with RoBERTa-large model and ALBERT model respectively:
 ```
-python predict.py
+em = 0.6895340985820392
+f1 = 0.8220366071156804
+sp_em = 0.6310600945307225
+sp_f1 = 0.8859230865915771
+joint_em = 0.4649561107359892
+joint_f1 = 0.7436079971145017
+```
+and
+```
+em = 0.7018230925050641
+f1 = 0.8344362891739213
+sp_em = 0.6317353139770425
+sp_f1 = 0.8919316739978699
+joint_em = 0.4700877785280216
+joint_f1 = 0.7573679775376975
 ```
 
-If you want to preprocess data again, please refer to Preprocess section.
+Please refer to Preprocess and training section if you want to reproduce other steps.
 
 ## Preprocess
 Please set DATA_ROOT in preprocess.sh for your usage, otherwise data will be downloaded to the currect directory.
@@ -47,17 +64,12 @@ After you download the data, you could also optionally to preprocess the data on
 bash run.sh preprocess
 ```
 
-## Inference on Fullwiki Setting
+## Training
+Please set your home data folder `HOME_DATA_FOLDER` in envs.py.
 
-## Citation
-If you use this code useful, please star our repo or consider citing:
+And then run
 ```
-@inproceedings{fang2020HGN,
-  title={Hierarchical Graph Network for Multi-hop Question Answering,
-  author={Yuwei Fang, Siqi Sun, Zhe Gan, Rohit Pillai, Shuohang Wang, Jingjing Liu},
-  booktitle={EMNLP},
-  year={2020}
-}
+python train.py --config_file configs/train.roberta.json
 ```
 
 ## Contributing
@@ -74,6 +86,26 @@ instructions provided by the bot. You will only need to do this once across all 
 This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
 For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/)
 or contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+## Acknowledgment
+
+Our code makes a heavy use of Huggingface's [PyTorch implementation](https://github.com/huggingface/transformers),
+and [DFGN](https://github.com/woshiyyya/DFGN-pytorch).
+We thank them for open-sourcing their projects.
+
+
+## Citation
+If you use this code useful, please star our repo or consider citing:
+```
+@inproceedings{fang2020HGN,
+  title={Hierarchical Graph Network for Multi-hop Question Answering,
+  author={Yuwei Fang, Siqi Sun, Zhe Gan, Rohit Pillai, Shuohang Wang, Jingjing Liu},
+  booktitle={EMNLP},
+  year={2020}
+}
+```
+
+
 
 ## License
 
