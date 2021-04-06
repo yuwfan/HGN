@@ -1,1 +1,4 @@
 __pycache__/
+data/
+*.tar.gz
+.idea/

@@ -1,5 +1,5 @@
 {
-    "output_dir": "/ssd/HGN/data/outputs/",
+    "output_dir": "data\\outputs\\",
     "exp_name": "roberta",
     "model_type": "roberta",
     "encoder_name_or_path": "roberta-large",

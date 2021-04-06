@@ -60,14 +60,17 @@ logger.info("Loading encoder from: {}".format(encoder_path))
 logger.info("Loading model from: {}".format(model_path))
 
 encoder, _ = load_encoder_model(args.encoder_name_or_path, args.model_type)
-model = HierarchicalGraphNetwork(config=args)
 
 if encoder_path is not None:
     encoder.load_state_dict(torch.load(encoder_path))
+
+torch.cuda.empty_cache()
+encoder.to(args.device)
+
+torch.cuda.empty_cache()
+model = HierarchicalGraphNetwork(config=args)
 if model_path is not None:
     model.load_state_dict(torch.load(model_path))
-
-encoder.to(args.device)
 model.to(args.device)
 
 encoder.eval()
