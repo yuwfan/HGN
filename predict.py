@@ -11,6 +11,7 @@ from csr_mhqa.utils import *
 from models.HGN import *
 from model_envs import MODEL_CLASSES, ALL_MODELS
 
+
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
                     level=logging.INFO)
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 parser = default_train_parser()
 
 logger.info("IN CMD MODE")
+
 args_config_provided = parser.parse_args(sys.argv[1:])
 if args_config_provided.config_file is not None:
     argv = json_to_argv(args_config_provided.config_file) + sys.argv[1:]
@@ -64,10 +66,10 @@ encoder, _ = load_encoder_model(args.encoder_name_or_path, args.model_type)
 if encoder_path is not None:
     encoder.load_state_dict(torch.load(encoder_path))
 
-torch.cuda.empty_cache()
+# torch.cuda.empty_cache()
 encoder.to(args.device)
 
-torch.cuda.empty_cache()
+# torch.cuda.empty_cache()
 model = HierarchicalGraphNetwork(config=args)
 if model_path is not None:
     model.load_state_dict(torch.load(model_path))

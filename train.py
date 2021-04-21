@@ -103,14 +103,14 @@ if encoder_path is not None and model_path is not None:
 #########################################################################
 # Get Optimizer
 ##########################################################################
-if args.max_steps > 0:
+if args.device == 'gpu' and args.max_steps > 0:
     t_total = args.max_steps
     args.num_train_epochs = args.max_steps // (len(train_dataloader) // args.gradient_accumulation_steps) + 1
 else:
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
 
 optimizer = get_optimizer(encoder, model, args, learning_rate, remove_pooler=False)
-if args.fp16:
+if args.device == 'gpu' and args.fp16:
     try:
         from apex import amp
     except ImportError:
@@ -120,7 +120,7 @@ if args.fp16:
     encoder, model = models
 
 # Distributed training (should be after apex fp16 initialization)
-if args.local_rank != -1:
+if args.device == 'gpu' and args.fp16 and args.local_rank != -1:
     encoder = torch.nn.parallel.DistributedDataParallel(encoder, device_ids=[args.local_rank],
                                                         output_device=args.local_rank,
                                                         find_unused_parameters=True)

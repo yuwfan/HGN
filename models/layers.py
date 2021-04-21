@@ -5,7 +5,9 @@ import torch.nn.functional as F
 from torch.nn.utils import rnn
 from torch.autograd import Variable
 
-from transformers.modeling_bert import BertLayer, gelu
+# from transformers.modeling_bert import BertLayer, gelu
+from transformers.models.bert.modeling_bert import BertLayer
+from transformers.activations import gelu
 from csr_mhqa.utils import get_weights, get_act
 
 
@@ -16,6 +18,7 @@ def tok_to_ent(tok2ent):
         return MeanMaxPooling
     else:
         raise NotImplementedError
+
 
 class MLP(nn.Module):
     def __init__(self, input_sizes, dropout_prob=0.2, bias=False):
