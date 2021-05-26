@@ -30,15 +30,15 @@ nlp.tokenizer.infix_finditer = infix_re.finditer
 #nlp.tokenizer = custom_tokenizer(nlp)
 
 def read_hotpot_examples(para_file,
-                         full_file,
+                         raw_file,
                          ner_file,
                          doc_link_file):
 
     with open(para_file, 'r', encoding='utf-8') as reader:
         para_data = json.load(reader)
 
-    with open(full_file, 'r', encoding='utf-8') as reader:
-        full_data = json.load(reader)
+    with open(raw_file, 'r', encoding='utf-8') as reader:
+        raw_data = json.load(reader)
 
     with open(ner_file, 'r', encoding='utf-8') as reader:
         ner_data = json.load(reader)
@@ -66,7 +66,7 @@ def read_hotpot_examples(para_file,
     max_sent_cnt, max_entity_cnt = 0, 0
 
     examples = []
-    for case in tqdm(full_data):
+    for case in tqdm(raw_data):
         key = case['_id']
         qas_type = case['type']
         sup_facts = set([(sp[0], sp[1])for sp in case['supporting_facts']])
@@ -610,7 +610,7 @@ if __name__ == '__main__':
 
     # Required parameters
     parser.add_argument("--para_path", type=str, required=True)
-    parser.add_argument("--full_data", type=str, required=True)
+    parser.add_argument("--raw_data", type=str, required=True)
     parser.add_argument("--ner_path", type=str, required=True)
     parser.add_argument("--doc_link_ner", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True, help='define output directory')
@@ -639,7 +639,7 @@ if __name__ == '__main__':
     tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path, do_lower_case=args.do_lower_case)
 
     examples = read_hotpot_examples(para_file=args.para_path,
-                                    full_file=args.full_data,
+                                    full_file=args.raw_data,
                                     ner_file=args.ner_path,
                                     doc_link_file=args.doc_link_ner)
     cached_examples_file = os.path.join(args.output_dir,
