@@ -139,7 +139,7 @@ def default_train_parser():
     # learning and log
     parser.add_argument('--seed', type=int, default=42,
                         help="random seed for initialization")
-    parser.add_argument("--num_train_epochs", default=10.0, type=float,
+    parser.add_argument("--num_train_epochs", default=1.0, type=float,
                         help="Total number of training epochs to perform.")
     parser.add_argument('--gradient_accumulation_steps', type=int, default=1,
                         help="Number of updates steps to accumulate before performing a backward/update pass.")
@@ -164,7 +164,7 @@ def default_train_parser():
     parser.add_argument("--trans_heads", type=int, default=3)
 
     # graph
-    parser.add_argument('--num_edge_type', type=int, default=8)
+    parser.add_argument('--num_edge_type', type=int, default=1)
     parser.add_argument('--mask_edge_types', type=str, default="0")
 
     parser.add_argument('--gnn', default='gat:1,2', type=str, help='gat:n_layer, n_head')
@@ -190,5 +190,8 @@ def default_train_parser():
     parser.add_argument("--sent_lambda", type=float, default=5)
     parser.add_argument("--ent_lambda", type=float, default=1)
     parser.add_argument("--sp_threshold", type=float, default=0.5)
+
+    # new
+    parser.add_argument("--adapter_size", type=int, default=32)
 
     return parser

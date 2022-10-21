@@ -12,6 +12,7 @@ import torch.nn.functional as F
 
 from torch import nn
 from tqdm import tqdm
+import sys
 
 from model_envs import MODEL_CLASSES, ALL_MODELS
 from transformers.tokenization_bert import whitespace_tokenize, BasicTokenizer, BertTokenizer
@@ -55,6 +56,9 @@ def get_optimizer(encoder, model, args, learning_rate, remove_pooler=False):
 
     param_optimizer = list(encoder.named_parameters())
     param_optimizer += list(model.named_parameters())
+    # print num parameters
+    num_params = count_parameters(encoder) + count_parameters(model)
+    logger.info(f"Total number of parameters: {num_params/1e6:.2f}")
 
     if remove_pooler:
         param_optimizer = [n for n in param_optimizer if 'pooler' not in n[0]]
@@ -70,7 +74,6 @@ def get_optimizer(encoder, model, args, learning_rate, remove_pooler=False):
 
 def compute_loss(args, batch, start, end, para, sent, ent, q_type):
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=IGNORE_INDEX)
-    binary_criterion = nn.BCEWithLogitsLoss(reduction='mean')
     loss_span = args.ans_lambda * (criterion(start, batch['y1']) + criterion(end, batch['y2']))
     loss_type = args.type_lambda * criterion(q_type, batch['q_type'])
 
@@ -100,7 +103,7 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
     N_thresh = len(thresholds)
     total_sp_dict = [{} for _ in range(N_thresh)]
 
-    for batch in tqdm(dataloader):
+    for batch in tqdm(dataloader, file=sys.stdout):
         with torch.no_grad():
             inputs = {'input_ids':      batch['context_idxs'],
                       'attention_mask': batch['context_mask'],
@@ -165,7 +168,7 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
     best_metrics, best_threshold = choose_best_threshold(answer_dict, prediction_file)
     json.dump(best_metrics, open(eval_file, 'w'))
 
-    return best_metrics, best_threshold
+    return best_metrics, best_threshold, answer_dict
 
 
 def get_weights(size, gain=1.414):

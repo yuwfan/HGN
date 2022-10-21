@@ -6,7 +6,7 @@ from torch.nn.utils import rnn
 from torch.autograd import Variable
 
 from transformers.modeling_bert import BertLayer, gelu
-from csr_mhqa.utils import get_weights, get_act
+# from csr_mhqa.utils import get_weights, get_act
 
 
 def tok_to_ent(tok2ent):
@@ -491,3 +491,33 @@ class PredictionLayer(nn.Module):
         yp1 = outer.max(dim=2)[0].max(dim=1)[1]
         yp2 = outer.max(dim=1)[0].max(dim=1)[1]
         return start_prediction, end_prediction, type_prediction, yp1, yp2
+
+
+def get_weights(size, gain=1.414):
+    weights = nn.Parameter(torch.zeros(size=size))
+    nn.init.xavier_uniform_(weights, gain=gain)
+    return weights
+
+
+def get_act(act):
+    if act.startswith('lrelu'):
+        return nn.LeakyReLU(float(act.split(':')[1]))
+    elif act == 'relu':
+        return nn.ReLU()
+    else:
+        raise NotImplementedError
+    
+def count_parameters(model, trainable_only=True, is_dict=False):
+    """
+    Count number of parameters in a model or state dictionary
+    :param model:
+    :param trainable_only:
+    :param is_dict:
+    :return:
+    """
+    if is_dict:
+        return sum(np.prod(list(model[k].size())) for k in model)
+    if trainable_only:
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    else:
+        return sum(p.numel() for p in model.parameters())

@@ -22,6 +22,8 @@ import logging
 from .configuration_albert import ALBERT_PRETRAINED_CONFIG_ARCHIVE_MAP, AlbertConfig
 from .configuration_auto import ALL_PRETRAINED_CONFIG_ARCHIVE_MAP, AutoConfig
 from .configuration_bert import BERT_PRETRAINED_CONFIG_ARCHIVE_MAP, BertConfig
+from .configuration_adapter_bert import BERT_PRETRAINED_CONFIG_ARCHIVE_MAP, AdapterBertConfig
+from .configuration_adapter_roberta import ROBERTA_PRETRAINED_CONFIG_ARCHIVE_MAP, AdapterRobertaConfig
 from .configuration_camembert import CAMEMBERT_PRETRAINED_CONFIG_ARCHIVE_MAP, CamembertConfig
 from .configuration_ctrl import CTRL_PRETRAINED_CONFIG_ARCHIVE_MAP, CTRLConfig
 from .configuration_distilbert import DISTILBERT_PRETRAINED_CONFIG_ARCHIVE_MAP, DistilBertConfig
@@ -153,6 +155,36 @@ if is_torch_available():
         load_tf_weights_in_bert,
         BERT_PRETRAINED_MODEL_ARCHIVE_MAP,
     )
+    # from .modeling_adapter_roberta_shared_gnn import (
+    #     AdapterGraphQA,
+    # )
+    # from .modeling_adapter_roberta_small_gat import (
+    #     AdapterGraphQA_small_gat,
+    # )
+    # from .modeling_adapter_vanilla_roberta import (
+    #     RobertaModelAdapter, RobertaModelAdapter4HotpotQA, RobertaModelAdapter4QA
+    # )
+    # from .modeling_adapter_vanilla_hgn import (
+    #     VanillaAdapter_HGN,
+    # )
+    # from .modeling_adapter_vanilla_hgn_v2 import (
+    #     VanillaAdapter_HGN_v2,
+    # )
+    # from .modeling_structadapt_roberta import (
+    #     StructAdaptRoberta,
+    # )
+    from .modeling_multimodal_structadapt_Roberta import (
+        MultiModalStructAdaptRoberta,
+    )
+    # from .modeling_structadapt_multimodal_fast_roberta import (
+    #     MultiModalStructAdaptFastRoberta,
+    # )
+    # from .modeling_structadapt_multimodal_fast_roberta_v2 import (
+    #     MultiModalStructAdaptFastRoberta_v2,
+    # )
+    # from Multimodal.modeling_multimodal_adapter_roberta import (
+    #     MultiModalAdapterRoberta,
+    # )
     from .modeling_openai import (
         OpenAIGPTPreTrainedModel,
         OpenAIGPTModel,
