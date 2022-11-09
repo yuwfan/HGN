@@ -37,7 +37,7 @@ from typing import Any, ContextManager, List, Tuple
 from typing import Optional, Tuple
 
 from .file_utils import add_start_docstrings
-from .modeling_multimodal_struct_gated import BertEmbeddings, BertLayerNorm, BertModel, BertPreTrainedModel, gelu
+from .modeling_multimodal_struct_gated_v1_1 import BertEmbeddings, BertLayerNorm, BertModel, BertPreTrainedModel, gelu
 
 
 logger = logging.getLogger(__name__)
@@ -183,9 +183,9 @@ class RobertaModelAdapter(BertModel):
         self.embeddings.word_embeddings = value
 
 
-class MultiModalStructAdaptRobertaGated(nn.Module):
+class MultiModalStructAdaptRobertaGated_v1_1(nn.Module):
     def __init__(self, config):
-        super(MultiModalStructAdaptRobertaGated, self).__init__()     
+        super(MultiModalStructAdaptRobertaGated_v1_1, self).__init__()     
 
         self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, hgn_config=config, adapter_size=config.adapter_size)
 

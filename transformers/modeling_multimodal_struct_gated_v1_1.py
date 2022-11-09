@@ -584,11 +584,25 @@ class BertLayer(nn.Module):
         layer_output_graph = self.output(intermediate_output_graph, attention_output_adapter_graph)
 
 
-
         #### Top Adapter
         graphs_outoutout, graph_out_dict = self.adapter_bimodal(layer_output_text, layer_output_graph, batch)
 
+        # layer_output_txt = self.adapter_text_top(layer_output_text) # text adapter
 
+        # graph_out_dict = self.adapter_graph_top(layer_output_graph, batch) # graph adapter    
+        
+        # layer_output_graph = self.gated_attention(layer_output_txt,
+        #                                          graph_out_dict['graph_state'],
+        #                                          graph_out_dict['node_mask'].squeeze(-1)) # fusing layer
+                                                 
+        # layer_output_text = self.dropout(self.projection(layer_output_txt)) # Inverted Bottle-neck layer
+
+        # layer_output = layer_output + layer_output_text # residual connection
+        
+        # #        return layer_output, graph_out_dict
+        # # layer_output          -> graph hidden states
+        # # layer_output_text     -> text hidden states
+        # # graph_out_dict        -> node embeds
 
 
 
