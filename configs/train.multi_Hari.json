@@ -1,9 +1,9 @@
 {
-    "exp_name": "multimodal_gated_v3_3",
+    "exp_name": "hgn_multi_Gatedv3_10112022_yolo",
     "model_type": "roberta",
     "encoder_name_or_path": "roberta-base",
     "num_train_epochs": 1,
-    "per_gpu_train_batch_size": 8,
+    "per_gpu_train_batch_size": 10,
     "learning_rate": 1e-4,
     "gradient_accumulation_steps": 1,
     "gpu_id": "0",
@@ -11,5 +11,7 @@
     "bi_attn_drop": 0.3,
     "trans_drop": 0.2,
     "fp16": "False",
-    "adapter_size": 32
+    "adapter_size": 128,
+    "hidden_dim": 768,
+    "seed": 202206
 }
