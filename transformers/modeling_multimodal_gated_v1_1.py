@@ -217,7 +217,7 @@ class MultiModalStructAdaptRobertaGated_v1_1(nn.Module):
                 are not taken into account for computing the loss.
             """
             # 1) get transformer token embeddings
-            input_state,input_state_graph, graph_out = self.encoder(
+            input_state, input_state_graph, graph_out = self.encoder(
                 input_ids=batch['context_idxs'],
                 attention_mask=batch['context_mask'],
                 batch=batch

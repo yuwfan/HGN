@@ -183,9 +183,9 @@ class RobertaModelAdapter(BertModel):
         self.embeddings.word_embeddings = value
 
 
-class MultiModalStructAdaptRobertaGated_v3(nn.Module):
+class MultiModalStructAdaptRobertaGated_v3_3(nn.Module):
     def __init__(self, config):
-        super(MultiModalStructAdaptRobertaGated_v3, self).__init__()     
+        super(MultiModalStructAdaptRobertaGated_v3_3, self).__init__()     
 
         self.encoder = RobertaModelAdapter.from_pretrained(config.encoder_name_or_path, hgn_config=config, adapter_size=config.adapter_size)
 

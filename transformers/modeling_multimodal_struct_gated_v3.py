@@ -606,13 +606,13 @@ class BertLayer(nn.Module):
         #####
         layer_output_text_bi = self.adapter_text_top(layer_output_text) # text adapter
         graph_out_dict = self.adapter_graph_top(layer_output_graph, batch) # graph adapter    
-        gated_output_graph = self.gated_attention(layer_output_text_bi,
+        gated_output_graph = self.adapter_gated_attention(layer_output_text_bi,
                                                  graph_out_dict['graph_state'],
                                                  graph_out_dict['node_mask'].squeeze(-1)) # fusing layer
-        gated_output_graph = self.dropout(self.projection(gated_output_graph)) # Inverted Btle-neck layer
+        gated_output_graph = self.adapter_dropout(self.adapter_projection(gated_output_graph)) # Inverted Btle-neck layer
         
 
-        layer_output_text_bi_correct_size = self.dropout(self.projection(layer_output_text_bi)) # Inverted Bottle-neck layer
+        layer_output_text_bi_correct_size = self.adapter_dropout(self.adapter_projection(layer_output_text_bi)) # Inverted Bottle-neck layer
         del layer_output_text_bi   
 
         # ipdb.set_trace()

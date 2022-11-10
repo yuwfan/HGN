@@ -176,17 +176,16 @@ if is_torch_available():
     from .modeling_multimodal_structadapt_Roberta import (
         MultiModalStructAdaptRoberta,
     )    
-
     from .modeling_multimodal_gated import (
         MultiModalStructAdaptRobertaGated,
-    )
-    from .MultiModalStructAdaptRobertaGated_v1_1 import (
+    )    
+    from .modeling_multimodal_gated_v1_1 import (
         MultiModalStructAdaptRobertaGated_v1_1,
     )
     from .modeling_multimodal_gated_v3 import (
         MultiModalStructAdaptRobertaGated_v3,
     )    
-    from .MultiModalStructAdaptRobertaGated_v3_3 import (
+    from .modeling_multimodal_gated_v3_3 import (
         MultiModalStructAdaptRobertaGated_v3_3,
     )
     from .modeling_structadapt_multimodal_fast_roberta import (
