@@ -5,6 +5,7 @@ import sys
 import os
 import shutil
 import json
+import ipdb
 
 from os.path import join
 from tqdm import tqdm, trange
@@ -34,8 +35,10 @@ def get_training_params(graphqa, print_stats=False):
     num_training_params = 0
     num_fronzen_params = 0
     num_params_hgn = 0
-    training_params = ['adapter', 'pred_layer']
+    training_params = ['adapter', 'predict_layer']           # Check number of trained parameters
     dict_params = {p: 0 for p in training_params}
+
+    ipdb.set_trace()
 
     for n, p in graphqa.named_parameters():
         trained = False
@@ -49,8 +52,14 @@ def get_training_params(graphqa, print_stats=False):
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
-        
+    
     if print_stats:
+
+        logger.info(f"Number of preditc params: {dict_params['preditc_layer']/1e6:.2f}M")
+        run["model/weights/predict_params"] = f"{dict_params['preditc_layer']/1e6:.2f}M"
+        logger.info(f"Number of adapter params: {dict_params['adapter']/1e6:.2f}M")
+        run["model/weights/adapter_params"] = f"{dict_params['adapter']/1e6:.2f}M"
+        
         num_total_params = num_training_params + num_fronzen_params
         logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")
         run["model/weights/num_training_params"] = f"{num_training_params/1e6:.2f}M"

@@ -1,5 +1,5 @@
 {
-    "exp_name": "multimodal_gated_v3_3",
+    "exp_name": "mug_v3_3_fullParams",
     "model_type": "roberta",
     "encoder_name_or_path": "roberta-base",
     "num_train_epochs": 1,

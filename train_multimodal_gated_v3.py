@@ -34,7 +34,7 @@ def get_training_params(graphqa, print_stats=False):
     num_training_params = 0
     num_fronzen_params = 0
     num_params_hgn = 0
-    training_params = ['adapter', 'pred_layer']
+    training_params = ['adapter', 'predict_layer']
     dict_params = {p: 0 for p in training_params}
 
     for n, p in graphqa.named_parameters():
@@ -78,12 +78,12 @@ def get_optimizer(model, args, learning_rate, remove_pooler=False):
     """
     num_training_params = 0
     params_name, params = get_training_params(model, print_stats=True)
-    logger.info(f"Name of the training parameters: {params_name}")
+    #logger.info(f"Name of the training parameters: {params_name}")
 
     for p in params:
         num_training_params += p.numel()
     logger.info(f"Number of parameters in the model: {num_training_params/1e6:.2f}M")
-    logger.info(f"Name of the training parameters: {params_name}")
+    #logger.info(f"Name of the training parameters: {params_name}")
 
     no_decay = ["bias", "LayerNorm.weight"]
     weight_decay = 0

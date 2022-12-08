@@ -1,5 +1,5 @@
 {
-    "exp_name": "roberta_10bt_compareParams",
+    "exp_name": "02_12_multiStructadapt_AF",
     "model_type": "roberta",
     "encoder_name_or_path": "roberta-base",
     "num_train_epochs": 1,
@@ -10,5 +10,8 @@
     "gnn_drop": 0.3,
     "bi_attn_drop": 0.3,
     "trans_drop": 0.2,
-    "fp16": "False"
+    "fp16": "False",
+    "adapter_size": 128,
+    "hidden_dim": 768,
+    "seed": 202206
 }

@@ -15,6 +15,7 @@
 # limitations under the License.
 """PyTorch BERT model. """
  
+
 import logging
 import math
 import os
@@ -516,8 +517,8 @@ class BertLayer(nn.Module):
         self.adapter_text_bottom = Adapter(config_adapters)
         self.adapter_graph_bottom = Adapter(config_adapters)
 
-        self.adapter_graph_top = StructAdapt(config, hgn_config)
 
+        self.adapter_graph_top = StructAdapt(config, hgn_config)
         self.adapter_text_top = nn.Sequential(
                                         nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps),
                                         nn.Linear(config.hidden_size, config_adapters.intermediate_size, bias=False),
@@ -583,13 +584,8 @@ class BertLayer(nn.Module):
         intermediate_output_graph = self.intermediate(attention_output_adapter_graph)
         layer_output_graph = self.output(intermediate_output_graph, attention_output_adapter_graph)
 
-
-
         #### Top Adapter
         graphs_outoutout, graph_out_dict = self.adapter_bimodal(layer_output_text, layer_output_graph, batch)
-
-
-
 
 
         outputs_text = (layer_output_text,) + outputs_text
@@ -1017,9 +1013,7 @@ class BertModel(BertPreTrainedModel):
 
         embedding_output = self.embeddings(
             input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
-        )
-
- 
+        ) 
         encoder_outputs_text, encoder_outputs_graph, graph_out = self.encoder(
             embedding_output,
             attention_mask=extended_attention_mask,
@@ -1028,7 +1022,6 @@ class BertModel(BertPreTrainedModel):
             encoder_attention_mask=encoder_extended_attention_mask,
             batch=batch,
         )
-
         sequence_output_text = encoder_outputs_text[0]
         sequence_output_graph = encoder_outputs_graph[0]
         #pooled_output = self.pooler(sequence_output)

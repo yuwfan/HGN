@@ -25,6 +25,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
 logger = logging.getLogger(__name__)
 
 
+
 def get_training_params(graphqa, print_stats=False):
     params = []
     params_name = []
@@ -35,6 +36,8 @@ def get_training_params(graphqa, print_stats=False):
     num_params_hgn = 0
     training_params = ['adapter', 'predict_layer']
     dict_params = {p: 0 for p in training_params}
+
+    # import ipdb; ipdb.set_trace()
 
     for n, p in graphqa.named_parameters():
         trained = False
@@ -48,7 +51,12 @@ def get_training_params(graphqa, print_stats=False):
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
-        
+    
+    # for n, p in graphqa.named_parameters():
+    #     params.append(p)
+    #     params_name.append(n)
+    #     num_fronzen_params += p.numel()
+
     if print_stats:
         num_total_params = num_training_params + num_fronzen_params
         logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")

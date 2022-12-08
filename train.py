@@ -3,6 +3,8 @@ import numpy as np
 import logging
 import sys
 
+import ipdb
+
 from os.path import join
 from tqdm import tqdm, trange
 from tensorboardX import SummaryWriter
@@ -18,6 +20,91 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     datefmt='%m/%d/%Y %H:%M:%S',
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+
+##################
+# IMPORTED METHODS FROM MultimodalRepo for PARAM_Size comparison
+##################
+def get_training_params(graphqa, print_stats=False):
+    params = []
+    params_name = []
+    params_name_frozen = []
+
+    num_training_params = 0
+    num_fronzen_params = 0
+    num_params_hgn = 0
+
+
+    # Just get total number of this model:
+
+    training_params = ['predict_layer', 'hgn', 'roberta']
+    dict_params = {p: 0 for p in training_params}
+
+    total_model = sum(p.numel() for p in model.parameters())
+    total_encoder = sum(p.numel() for p in encoder.parameters())
+    ipdb.set_trace()
+    for n, p in graphqa.named_parameters():
+        trained = False
+        for trained_param in training_params:
+            if trained_param in n:
+                num_training_params += p.numel()
+                trained = True
+                params.append(p)
+                params_name.append(n)
+                dict_params[trained_param] += p.numel()
+        if not trained:
+            num_fronzen_params += p.numel()
+            params_name_frozen.append(n)
+        
+    if print_stats:
+        num_total_params = num_training_params + num_fronzen_params
+        logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")
+        logger.info(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
+        logger.info(f"Number of total parameters: {num_total_params/1e6:.2f}M")
+        logger.info(f"-----------------------")
+        for k, v in dict_params.items():
+            logger.info(f"Number of {k} parameters: {v/1e6:.2f}M")
+        logger.info(f"-----------------------")
+        logger.info(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
+        logger.info(f"-----------------------")
+        logger.info(f"Number of total parameters (model): {total_model/1e6:.2f}M")
+        logger.info(f"Number of total parameters (encoder): {total_encoder/1e6:.2f}M")
+    return params_name, params
+
+def get_optimizer(model, args, learning_rate, remove_pooler=False):
+    """
+    get BertAdam for encoder / classifier or BertModel
+    :param model:
+    :param classifier:
+    :param args:
+    :param remove_pooler:
+    :return:
+    """
+    num_training_params = 0
+    params_name, params = get_training_params(model, print_stats=True)
+    logger.info(f"Name of the training parameters: {params_name}")
+
+    for p in params:
+        num_training_params += p.numel()
+    logger.info(f"Number of parameters in the model: {num_training_params/1e6:.2f}M")
+    logger.info(f"Name of the training parameters: {params_name}")
+
+    no_decay = ["bias", "LayerNorm.weight"]
+    weight_decay = 0
+    optimizer_grouped_parameters = [
+        {
+            "params": [p for n, p in zip(params_name, params) if not any(nd in n for nd in no_decay)],
+            "weight_decay": weight_decay,
+        },
+        {"params": [p for n, p in zip(params_name, params) if any(nd in n for nd in no_decay)], "weight_decay": 0.0},
+    ]
+
+    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate, eps=1e-8)
+
+    return optimizer
+
+
 
 #########################################################################
 # Initialize arguments
@@ -109,7 +196,11 @@ if args.max_steps > 0:
 else:
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
 
-optimizer = get_optimizer(encoder, model, args, learning_rate, remove_pooler=False)
+# ipdb.set_trace()
+# optimizer = get_optimizer(encoder, model, args, learning_rate, remove_pooler=False)
+optimizer = get_optimizer(model, args, learning_rate, remove_pooler=False)
+
+
 if args.fp16:
     try:
         from apex import amp

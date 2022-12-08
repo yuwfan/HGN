@@ -1,5 +1,5 @@
 {
-    "exp_name": "hgn_multi_Gatedv3_10112022_yolo",
+    "exp_name": "08_12_mg_struct_allParams",
     "model_type": "roberta",
     "encoder_name_or_path": "roberta-base",
     "num_train_epochs": 1,

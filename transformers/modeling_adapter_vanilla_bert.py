@@ -15,7 +15,7 @@
 # limitations under the License.
 """PyTorch BERT model. """
 
-import ipdb
+
 import logging
 import math
 import os
@@ -26,12 +26,11 @@ from torch.functional import F
 from torch.nn import CrossEntropyLoss, MSELoss
 import copy
 import numpy as np
-from torch.nn.utils import rnn
-from torch.autograd import Variable
 
 from .configuration_adapter_bert import AdapterBertConfig
 from .file_utils import add_start_docstrings
-from .modeling_utils_structadapt import PreTrainedModel, prune_linear_layer
+from .modeling_utils import PreTrainedModel, prune_linear_layer
+from .hgn_graph_model import HierarchicalGraphNetwork
 
 from collections import OrderedDict, UserDict
 from collections.abc import MutableMapping
@@ -210,7 +209,6 @@ class BertEmbeddings(nn.Module):
 class BertSelfAttention(nn.Module):
     def __init__(self, config):
         super(BertSelfAttention, self).__init__()
-
         if config.hidden_size % config.num_attention_heads != 0:
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
@@ -227,7 +225,7 @@ class BertSelfAttention(nn.Module):
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-        
+
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
@@ -376,40 +374,22 @@ class BertOutput(nn.Module):
 
 # Adapters
 
-class Adapter(nn.Module):
+class TextAdapter(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.DenseReluDense = nn.Sequential(nn.Linear(config.hidden_size, config.intermediate_size, bias=False),
                                             nn.ReLU(),
                                             nn.Dropout(config.hidden_dropout_prob),
                                             nn.Linear(config.intermediate_size, config.hidden_size, bias=False))
+        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states):
         norm_x = self.layer_norm(hidden_states)
         y = self.DenseReluDense(norm_x)
-        layer_output = hidden_states + self.dropout(y) # residual connection
+        layer_output = hidden_states + self.dropout(y)
         return layer_output
 
-
-class StructAdapt(nn.Module):
-    def __init__(self, config, hgn_config):
-        super().__init__()
-        
-        self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.project_layer = nn.Linear(config.hidden_size, config.adapter_size, bias=False)
-        hgn_new_config = copy.deepcopy(hgn_config)
-        hgn_new_config.hidden_dim = config.adapter_size
-        
-        self.hgn = HierarchicalGraphNetwork(hgn_new_config)
-
-
-    def forward(self, hidden_states, batch):
-        norm_x = self.layer_norm(hidden_states)
-        return self.hgn(batch, norm_x)
-
-    
 class GatedAttention(nn.Module):
     def __init__(self, input_dim, memory_dim, hid_dim, dropout, gate_method='gate_att_up'):
         super(GatedAttention, self).__init__()
@@ -432,7 +412,6 @@ class GatedAttention(nn.Module):
         bsz, input_len, memory_len = input.size(0), input.size(1), memory.size(1)
 
         input_dot = F.relu(self.input_linear_1(input))  # N x Ld x d
-
         memory_dot = F.relu(self.memory_linear_1(memory))  # N x Lm x d
 
         # N * Ld * Lm
@@ -457,225 +436,96 @@ class GatedAttention(nn.Module):
             raise ValueError("Not support gate method: {}".format(self.gate_method))
 
 
-        return output
-    
-class BiModalAdapter(nn.Module):
-    def __init__(self, config, hgn_config):
-        super().__init__()
-        self.adapter_graph = StructAdapt(config, hgn_config)
-        self.adapter_text = nn.Sequential(nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps),
-                                          nn.Linear(config.hidden_size, config.intermediate_size, bias=False),
-                                          nn.ReLU(),
-                                          nn.Dropout(config.hidden_dropout_prob),
-                                          nn.Linear(config.intermediate_size, config.intermediate_size, bias=False),
-                                          nn.Dropout(config.hidden_dropout_prob))
-
-        self.adapter_fusing_layer = GatedAttention(input_dim=config.intermediate_size,
-                                            memory_dim=config.intermediate_size if hgn_config.q_update else config.intermediate_size*2,
-                                            hid_dim=config.intermediate_size,
-                                            dropout=hgn_config.bi_attn_drop,
-                                            gate_method=hgn_config.ctx_attn)
-        
-        self.projection = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        
-    def forward(self, hidden_states_text, hidden_states_graph, batch):
-        layer_output_text = self.adapter_text(hidden_states_text) # text adapter
-        
-        graph_out_dict = self.adapter_graph(hidden_states_graph, batch) # graph adapter    
-
-        layer_output = self.adapter_fusing_layer(layer_output_text,
-                                                 graph_out_dict['graph_state'],
-                                                 graph_out_dict['node_mask'].squeeze(-1)) # fusing layer
-        layer_output = self.dropout(self.projection(layer_output)) # Inverted Bottle-neck layer
-        
-        layer_output = layer_output + hidden_states_text # residual connection
-        return layer_output, graph_out_dict
-
-def output_size():
-    print(torch.cuda.memory.memory_allocated())
-    print(torch.cuda.memory.max_memory_allocated())
-    print(torch.cuda.memory.memory_reserved())
-    print(torch.cuda.memory.max_memory_reserved())
-
+        return output, memory
 
 class BertLayer(nn.Module):
-    def __init__(self, config, hgn_config, layer_no):
+    def __init__(self, config):
         super(BertLayer, self).__init__()
-        self.layer_no = layer_no
-
         self.attention = BertAttention(config)
         self.is_decoder = config.is_decoder
         if self.is_decoder:
             self.crossattention = BertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
-
+        
         config_adapters = copy.deepcopy(config)
         config_adapters.intermediate_size = config.adapter_size
 
-        self.adapter_text_bottom = Adapter(config_adapters)
-        self.adapter_graph_bottom = Adapter(config_adapters)
+        self.adapter_text_bottom = TextAdapter(config_adapters)
+        self.adapter_text_top = TextAdapter(config_adapters)
 
-        self.adapter_graph_top = StructAdapt(config, hgn_config)
-        self.adapter_text_top = nn.Sequential(
-                                        nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps),
-                                        nn.Linear(config.hidden_size, config_adapters.intermediate_size, bias=False),
-                                        nn.ReLU(),
-                                        nn.Dropout(config.hidden_dropout_prob),
-                                        nn.Linear(config_adapters.intermediate_size, config_adapters.intermediate_size, bias=False),
-                                        nn.Dropout(config.hidden_dropout_prob))
-
-
-
-        self.adapter_gated_attention = GatedAttention(input_dim=config_adapters.intermediate_size,
-                                        memory_dim=config_adapters.intermediate_size if hgn_config.q_update else config_adapters.intermediate_size*2,
-                                        hid_dim=config_adapters.intermediate_size,
-                                        dropout=hgn_config.bi_attn_drop,
-                                        gate_method=hgn_config.ctx_attn)
-        
-        self.projection = nn.Linear(config_adapters.intermediate_size, config.hidden_size, bias=False)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        
-
-
-        # self.adapter_bimodal = BiModalAdapter(config_adapters, hgn_config)
-        
     def forward(
         self,
-        text_hidden_states,
-        graph_hidden_states,
+        hidden_states,
         attention_mask=None,
         head_mask=None,
         encoder_hidden_states=None,
         encoder_attention_mask=None,
-        batch=None
     ):
-    
-        # ipdb.set_trace()
-        # output_size()
-
-
-        # Textual Outputs
-        self_attention_outputs_text = self.attention(text_hidden_states, attention_mask, head_mask)
-        # del text_hidden_states
-        attention_output_text = self_attention_outputs_text[0]
-        outputs_text = self_attention_outputs_text[1:]  # add self attentions if we output attention weights
-        # del self_attention_outputs_text
+        self_attention_outputs = self.attention(hidden_states, attention_mask, head_mask)
+        attention_output = self_attention_outputs[0]
+        outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
 
         if self.is_decoder and encoder_hidden_states is not None:
-            cross_attention_outputs_text = self.crossattention(
-                attention_output_text, attention_mask, head_mask, encoder_hidden_states, encoder_attention_mask
+            cross_attention_outputs = self.crossattention(
+                attention_output, attention_mask, head_mask, encoder_hidden_states, encoder_attention_mask
             )
-            attention_output_text = cross_attention_outputs_text[0]
-            outputs_text = outputs_text + cross_attention_outputs_text[1:]  # add cross attentions if we output attention weights
+            attention_output = cross_attention_outputs[0]
+            outputs = outputs + cross_attention_outputs[1:]  # add cross attentions if we output attention weights
 
-        # Graphical Outputs
-        self_attention_outputs_graph = self.attention(graph_hidden_states, attention_mask, head_mask)
-        # del graph_hidden_states
-        attention_output_graph = self_attention_outputs_graph[0]
-        outputs_graph = self_attention_outputs_graph[1:]  # add self attentions if we output attention weights
-        # del self_attention_outputs_graph
-
-        if self.is_decoder and encoder_hidden_states is not None:
-            cross_attention_outputs_graph = self.crossattention(
-                attention_output_graph, attention_mask, head_mask, encoder_hidden_states, encoder_attention_mask
-            )
-            attention_output_graph = cross_attention_outputs_graph[0]
-            outputs_graph = outputs_graph + cross_attention_outputs_graph[1:]  # add cross attentions if we output attention weights
-
-        ######## Bottom Adapter
-        attention_output_adapter_text = self.adapter_text_bottom(attention_output_text)
-        attention_output_adapter_graph = self.adapter_graph_bottom(attention_output_graph)
-
-        #### intermediate
-        ###### text
-        intermediate_output_text = self.intermediate(attention_output_adapter_text)
-        layer_output_text = self.output(intermediate_output_text, attention_output_adapter_text)
-        ###### graph
-        intermediate_output_graph = self.intermediate(attention_output_adapter_graph)
-        layer_output_graph = self.output(intermediate_output_graph, attention_output_adapter_graph)
-        #### Top Adapter
-        # graphs_outoutout, graph_out_dict = self.adapter_bimodal(layer_output_text, layer_output_graph, batch)
-
-
-
-        #####
-        layer_output_text_bi = self.adapter_text_top(layer_output_text) # text adapter
-
-        graph_out_dict = self.adapter_graph_top(layer_output_graph, batch) # graph adapter    
-
-        gated_output_graph = self.adapter_gated_attention(layer_output_text_bi,
-                                                 graph_out_dict['graph_state'],
-                                                 graph_out_dict['node_mask'].squeeze(-1)) # fusing layer
-        gated_output_graph = self.dropout(self.projection(gated_output_graph)) # Inverted Btle-neck layer
+        #### Bottom Adapter
+        attention_output_text = self.adapter_text_bottom(attention_output)
         
-        layer_output_text_bi = self.dropout(self.projection(layer_output_text_bi)) # Inverted Bottle-neck layer
+        intermediate_output_text = self.intermediate(attention_output_text)
+        layer_output_text = self.output(intermediate_output_text, attention_output_text)
+        
+        #### Top Adapter
+        layer_output = self.adapter_text_top(layer_output_text)
 
-        fusion_output = gated_output_graph + layer_output_text # residual connection
 
-
-        outputs_text = (layer_output_text_bi,) + outputs_text
-        outputs_graph = (fusion_output,) + outputs_graph
-
-        return (outputs_text, outputs_graph, graph_out_dict)
+        outputs = (layer_output,) + outputs
+        return outputs
 
 
 class BertEncoder(nn.Module):
-    def __init__(self, config, hgn_config):
+    def __init__(self, config):
         super(BertEncoder, self).__init__()
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
-        self.layer = nn.ModuleList([BertLayer(config, hgn_config, layer_no) for layer_no in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
         
     def forward(
         self,
-        hidden_states_text,
+        hidden_states,
         attention_mask=None,
         head_mask=None,
         encoder_hidden_states=None,
         encoder_attention_mask=None,
-        batch=None,
     ):
-        all_hidden_states_text = ()
-        all_hiddent_states_graph = ()
-        all_attentions_text = ()
-        all_attentions_graph = ()
-
-        hidden_states_graph = hidden_states_text
-
+        all_hidden_states = ()
+        all_attentions = ()
         for i, layer_module in enumerate(self.layer):
             if self.output_hidden_states:
-                all_hidden_states_text = all_hidden_states_text + (hidden_states_text,)
-                all_hidden_states_graph = all_hidden_states_graph + (hidden_states_graph,)
-            # Check wether layer() allows graphical input
-            layer_output_text, layer_output_graph, graph_out  = layer_module(
-                hidden_states_text, hidden_states_graph, attention_mask, head_mask[i], encoder_hidden_states, encoder_attention_mask, batch=batch,
+                all_hidden_states = all_hidden_states + (hidden_states,)
+
+            layer_outputs = layer_module(
+                hidden_states, attention_mask, head_mask[i], encoder_hidden_states, encoder_attention_mask
             )
-                
-            hidden_states_text = layer_output_text[0]
-            hidden_states_graph = layer_output_graph[0]
+            hidden_states = layer_outputs[0]
 
             if self.output_attentions:
-                all_attentions_text = all_attentions_text + (layer_output_text[1],)
-                all_attentions_graph = all_attentions_graph + (layer_output_graph[1],)
+                all_attentions = all_attentions + (layer_outputs[1],)
 
         # Add last layer
         if self.output_hidden_states:
-            all_hidden_states_text = all_hidden_states_text + (hidden_states_text,)
-            all_hidden_states_graph = all_hidden_states_graph + (hidden_states_graph,)
+            all_hidden_states = all_hidden_states + (hidden_states,)
 
-        outputs_text = (hidden_states_text,)
-        outputs_graph = (hidden_states_graph,)
+        outputs = (hidden_states,)
         if self.output_hidden_states:
-            outputs_text = outputs_text + (all_hidden_states_text,)
-            outputs_graph = outputs_graph + (all_hidden_states_graph,)
+            outputs = outputs + (all_hidden_states,)
         if self.output_attentions:
-            outputs_text = outputs_text + (all_attentions_text,)
-            outputs_graph = outputs_graph + (all_attentions_graph,)
-
-
-        return outputs_text, outputs_graph, graph_out  # last-layer hidden state, (all hidden states), (all attentions)
+            outputs = outputs + (all_attentions,)
+        return outputs  # last-layer hidden state, (all hidden states), (all attentions)
 
 
 class BertPooler(nn.Module):
@@ -893,13 +743,13 @@ class BertModel(BertPreTrainedModel):
 
     """
 
-    def __init__(self, config, hgn_config):
+    def __init__(self, config):
         super(BertModel, self).__init__(config)
         self.config = config
         self.embeddings = BertEmbeddings(config)
-        self.encoder = BertEncoder(config, hgn_config)
+        self.encoder = BertEncoder(config)
         self.pooler = BertPooler(config)
-        
+
         self.init_weights()
 
     def get_input_embeddings(self):
@@ -926,7 +776,6 @@ class BertModel(BertPreTrainedModel):
         inputs_embeds=None,
         encoder_hidden_states=None,
         encoder_attention_mask=None,
-        batch=None,
     ):
         """ Forward pass on the Model.
 
@@ -1033,511 +882,26 @@ class BertModel(BertPreTrainedModel):
                 )  # We can specify head_mask for each layer
             head_mask = head_mask.to(
                 dtype=next(self.parameters()).dtype
-            )  # switch to fload if need + fp16 compatibilityls
+            )  # switch to fload if need + fp16 compatibility
         else:
             head_mask = [None] * self.config.num_hidden_layers
 
         embedding_output = self.embeddings(
             input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
         )
-
- 
-        encoder_outputs_text, encoder_outputs_graph, graph_out = self.encoder(
+        encoder_outputs = self.encoder(
             embedding_output,
             attention_mask=extended_attention_mask,
             head_mask=head_mask,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_extended_attention_mask,
-            batch=batch,
         )
-
-        sequence_output_text = encoder_outputs_text[0]
-        sequence_output_graph = encoder_outputs_graph[0]
+        sequence_output = encoder_outputs[0]
         #pooled_output = self.pooler(sequence_output)
 
         #outputs = (sequence_output, pooled_output,) + encoder_outputs[
         #    1:
         #]  # add hidden_states and attentions if they are here
-        outputs_text = (sequence_output_text, ) + encoder_outputs_text[1:]
-        outputs_graph = (sequence_output_graph, ) + encoder_outputs_graph[1:]
-        
-        return outputs_text, outputs_graph, graph_out  # sequence_output, pooled_output, (hidden_states), (attentions)
+        outputs = (sequence_output, ) + encoder_outputs[1:]
+        return outputs  # sequence_output, pooled_output, (hidden_states), (attentions)
 
-
-class HierarchicalGraphNetwork(nn.Module):
-    """
-    Packing Query Version
-    """
-    def __init__(self, config):
-        super(HierarchicalGraphNetwork, self).__init__()
-        self.config = config
-        self.max_query_length = self.config.max_query_length
-
-        # self.bi_attention = BiAttention(input_dim=config.input_dim,
-        #                                 memory_dim=config.input_dim,
-        #                                 hid_dim=config.hidden_dim,
-        #                                 dropout=config.bi_attn_drop)
-        # self.bi_attn_linear = nn.Linear(config.hidden_dim * 4, config.hidden_dim)
-        self.query_proj = nn.Linear(config.input_dim, config.hidden_dim*2)
-        self.proj = nn.Linear(config.input_dim, config.hidden_dim)
-        self.hidden_dim = config.hidden_dim
-
-        self.sent_lstm = RNNWrapper(input_dim=config.hidden_dim,
-                                     hidden_dim=config.hidden_dim,
-                                     n_layer=1,
-                                     dropout=config.lstm_drop)
-
-        self.graph_blocks = nn.ModuleList()
-        for _ in range(self.config.num_gnn_layers):
-            self.graph_blocks.append(GraphBlock(self.config.q_attn, config))
-
-    def forward(self, batch, context_encoding):
-        query_mapping = batch['query_mapping']
-
-        # extract query encoding
-        trunc_query_mapping = query_mapping[:, :self.max_query_length].contiguous()
-        trunc_query_state = (context_encoding * query_mapping.unsqueeze(2))[:, :self.max_query_length, :].contiguous()
-        # bert encoding query vec
-        query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
-        query_vec = self.query_proj(query_vec)
-        # attn_output, trunc_query_state = self.bi_attention(context_encoding,
-        #                                                    trunc_query_state,
-        #                                                    trunc_query_mapping)
-
-        # input_state = self.bi_attn_linear(attn_output) # N x L x d
-        input_state = self.proj(context_encoding)
-        input_state = self.sent_lstm(input_state, batch['context_lens'])
-
-        for l in range(self.config.num_gnn_layers):
-            graph_out_dict = self.graph_blocks[l](batch, input_state, query_vec)
-
-        return graph_out_dict
-        
-
-def tok_to_ent(tok2ent):
-    if tok2ent == 'mean':
-        return MeanPooling
-    elif tok2ent == 'mean_max':
-        return MeanMaxPooling
-    else:
-        raise NotImplementedError
-
-class MLP(nn.Module):
-    def __init__(self, input_sizes, dropout_prob=0.2, bias=False):
-        super(MLP, self).__init__()
-        self.layers = nn.ModuleList()
-        for i in range(1, len(input_sizes)):
-            self.layers.append(nn.Linear(input_sizes[i - 1], input_sizes[i], bias=bias))
-        self.norm_layers = nn.ModuleList()
-        if len(input_sizes) > 2:
-            for i in range(1, len(input_sizes) - 1):
-                self.norm_layers.append(nn.LayerNorm(input_sizes[i]))
-        self.drop_out = nn.Dropout(p=dropout_prob)
-
-    def forward(self, x):
-        for i, layer in enumerate(self.layers):
-            x = layer(self.drop_out(x))
-            if i < len(self.layers) - 1:
-                x = gelu(x)
-                if len(self.norm_layers):
-                    x = self.norm_layers[i](x)
-        return x
-
-
-def mean_pooling(input, mask):
-    mean_pooled = input.sum(dim=1) / mask.sum(dim=1, keepdim=True)
-    return mean_pooled
-
-
-class MeanPooling(nn.Module):
-    def __init__(self):
-        super(MeanPooling, self).__init__()
-
-    def forward(self, doc_state, entity_mapping, entity_lens):
-        entity_states = entity_mapping.unsqueeze(3) * doc_state.unsqueeze(1)  # N x E x L x d
-        mean_pooled = torch.sum(entity_states, dim=2) / entity_lens.unsqueeze(2)
-        return mean_pooled
-
-class MeanMaxPooling(nn.Module):
-    def __init__(self):
-        super(MeanMaxPooling, self).__init__()
-
-    def forward(self, doc_state, entity_mapping, entity_lens):
-        """
-        :param doc_state:  N x L x d
-        :param entity_mapping:  N x E x L
-        :param entity_lens:  N x E
-        :return: N x E x 2d
-        """
-        entity_states = entity_mapping.unsqueeze(3) * doc_state.unsqueeze(1)  # N x E x L x d
-        max_pooled = torch.max(entity_states, dim=2)[0]
-        mean_pooled = torch.sum(entity_states, dim=2) / entity_lens.unsqueeze(2)
-        output = torch.cat([max_pooled, mean_pooled], dim=2)  # N x E x 2d
-        return output
-
-class LayerNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-12):
-        """Construct a layernorm module in the TF style (epsilon inside the square root).
-        """
-        super(LayerNorm, self).__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.bias = nn.Parameter(torch.zeros(hidden_size))
-        self.variance_epsilon = eps
-
-    def forward(self, x):
-        u = x.mean(-1, keepdim=True)
-        s = (x - u).pow(2).mean(-1, keepdim=True)
-        x = (x - u) / torch.sqrt(s + self.variance_epsilon)
-        return self.weight * x + self.bias
-
-class GATSelfAttention(nn.Module):
-    def __init__(self, in_dim, out_dim, config, q_attn=False, head_id=0):
-        """ One head GAT """
-        super(GATSelfAttention, self).__init__()
-        self.config = config
-        self.in_dim = in_dim
-        self.out_dim = out_dim
-        self.dropout = self.config.gnn_drop
-        self.q_attn = q_attn
-        self.query_dim = in_dim
-        self.n_type = self.config.num_edge_type
-
-        self.head_id = head_id
-        self.step = 0
-
-        self.W_type = nn.ParameterList()
-        self.a_type = nn.ParameterList()
-        self.qattn_W1 = nn.ParameterList()
-        self.qattn_W2 = nn.ParameterList()
-        for i in range(self.n_type):
-            self.W_type.append(get_weights((in_dim, out_dim)))
-            self.a_type.append(get_weights((out_dim * 2, 1)))
-
-            if self.q_attn:
-                q_dim = in_dim
-                self.qattn_W1.append(get_weights((q_dim, out_dim * 2)))
-                self.qattn_W2.append(get_weights((out_dim * 2, out_dim * 2)))
-
-        self.act = get_act('lrelu:0.2')
-
-    def forward(self, input_state, adj, node_mask=None, query_vec=None):
-        zero_vec = torch.zeros_like(adj)
-        scores = torch.zeros_like(adj)
-
-        for i in range(self.n_type):
-            h = torch.matmul(input_state, self.W_type[i])
-            h = F.dropout(h, self.dropout, self.training)
-            N, E, d = h.shape
-
-            a_input = torch.cat([h.repeat(1, 1, E).view(N, E * E, -1), h.repeat(1, E, 1)], dim=-1)
-            a_input = a_input.view(-1, E, E, 2*d)
-
-            if self.q_attn:
-                q_gate = F.relu(torch.matmul(query_vec, self.qattn_W1[i]))
-                q_gate = torch.sigmoid(torch.matmul(q_gate, self.qattn_W2[i]))
-                a_input = a_input * q_gate[:, None, None, :]
-                score = self.act(torch.matmul(a_input, self.a_type[i]).squeeze(3))
-            else:
-                score = self.act(torch.matmul(a_input, self.a_type[i]).squeeze(3))
-
-            scores += torch.where(adj == i+1, score, zero_vec.to(score.dtype))
-
-        zero_vec = -1e30 * torch.ones_like(scores)
-        scores = torch.where(adj > 0, scores, zero_vec.to(scores.dtype))
-
-        # Ahead Alloc
-        if node_mask is not None:
-            h = h * node_mask
-
-        coefs = F.softmax(scores, dim=2)  # N * E * E
-        h = coefs.unsqueeze(3) * h.unsqueeze(2)  # N * E * E * d
-        h = torch.sum(h, dim=1)
-        return h
-
-
-class AttentionLayer(nn.Module):
-    def __init__(self, in_dim, hid_dim, n_head, q_attn, config):
-        super(AttentionLayer, self).__init__()
-        assert hid_dim % n_head == 0
-        self.dropout = config.gnn_drop
-
-        self.attn_funcs = nn.ModuleList()
-        for i in range(n_head):
-            self.attn_funcs.append(
-                GATSelfAttention(in_dim=in_dim, out_dim=hid_dim // n_head, config=config, q_attn=q_attn, head_id=i))
-
-        if in_dim != hid_dim:
-            self.align_dim = nn.Linear(in_dim, hid_dim)
-            nn.init.xavier_uniform_(self.align_dim.weight, gain=1.414)
-        else:
-            self.align_dim = lambda x: x
-
-    def forward(self, input, adj, node_mask=None, query_vec=None):
-        hidden_list = []
-        for attn in self.attn_funcs:
-            h = attn(input, adj, node_mask=node_mask, query_vec=query_vec)
-            hidden_list.append(h)
-
-        h = torch.cat(hidden_list, dim=-1)
-        h = F.dropout(h, self.dropout, training=self.training)
-        h = F.relu(h)
-        return h
-
-
-class BertLayerNorm(nn.Module):
-    def __init__(self, hidden_size, eps=1e-12):
-        """Construct a layernorm module in the TF style (epsilon inside the square root).
-        """
-        super(BertLayerNorm, self).__init__()
-        self.weight = nn.Parameter(torch.ones(hidden_size))
-        self.bias = nn.Parameter(torch.zeros(hidden_size))
-        self.variance_epsilon = eps
-
-    def forward(self, x):
-        u = x.mean(-1, keepdim=True)
-        s = (x - u).pow(2).mean(-1, keepdim=True)
-        x = (x - u) / torch.sqrt(s + self.variance_epsilon)
-        return self.weight * x + self.bias
-
-
-class OutputLayer(nn.Module):
-    def __init__(self, hidden_dim, config, num_answer=1):
-        super(OutputLayer, self).__init__()
-
-        self.output = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim*2),
-            nn.ReLU(),
-            BertLayerNorm(hidden_dim*2, eps=1e-12),
-            nn.Dropout(config.trans_drop),
-            nn.Linear(hidden_dim*2, num_answer),
-        )
-
-    def forward(self, hidden_states):
-        return self.output(hidden_states)
-
-class GraphBlock(nn.Module):
-    def __init__(self, q_attn, config):
-        super(GraphBlock, self).__init__()
-        self.config = config
-        self.hidden_dim = config.hidden_dim
-
-        if self.config.q_update:
-            self.gat_linear = nn.Linear(self.hidden_dim*2, self.hidden_dim)
-        else:
-            # default
-            self.gat_linear = nn.Linear(self.config.hidden_dim*2, self.hidden_dim*2)
-
-        if self.config.q_update:
-            self.gat = AttentionLayer(self.hidden_dim, self.hidden_dim, config.num_gnn_heads, q_attn=q_attn, config=self.config)
-
-        else:
-            self.gat = AttentionLayer(self.hidden_dim*2, self.hidden_dim*2, config.num_gnn_heads, q_attn=q_attn, config=self.config)
-
-    def forward(self, batch, input_state, query_vec):
-        para_start_mapping = batch['para_start_mapping']
-        para_end_mapping = batch['para_end_mapping']
-        sent_start_mapping = batch['sent_start_mapping']
-        sent_end_mapping = batch['sent_end_mapping']
-        ent_start_mapping = batch['ent_start_mapping']
-        ent_end_mapping = batch['ent_end_mapping']
-
-        para_start_output = torch.bmm(para_start_mapping, input_state[:, :, self.hidden_dim:])   # N x max_para x d
-        para_end_output = torch.bmm(para_end_mapping, input_state[:, :, :self.hidden_dim])       # N x max_para x d
-        para_state = torch.cat([para_start_output, para_end_output], dim=-1)  # N x max_para x 2d
-
-        sent_start_output = torch.bmm(sent_start_mapping, input_state[:, :, self.hidden_dim:])   # N x max_sent x d
-        sent_end_output = torch.bmm(sent_end_mapping, input_state[:, :, :self.hidden_dim])       # N x max_sent x d
-        sent_state = torch.cat([sent_start_output, sent_end_output], dim=-1)  # N x max_sent x 2d
-
-        ent_start_output = torch.bmm(ent_start_mapping, input_state[:, :, self.hidden_dim:])   # N x max_ent x d
-        ent_end_output = torch.bmm(ent_end_mapping, input_state[:, :, :self.hidden_dim])       # N x max_ent x d
-        ent_state = torch.cat([ent_start_output, ent_end_output], dim=-1)  # N x max_ent x 2d
-
-        N, max_para_num, _ = para_state.size()
-        _, max_sent_num, _ = sent_state.size()
-        _, max_ent_num, _ = ent_state.size()
-
-        if self.config.q_update:
-            graph_state = self.gat_linear(torch.cat([para_state, sent_state, ent_state], dim=1)) # N * (max_para + max_sent + max_ent) * d
-            graph_state = torch.cat([query_vec.unsqueeze(1), graph_state], dim=1)
-        else:
-            graph_state = self.gat_linear(query_vec)
-            graph_state = torch.cat([graph_state.unsqueeze(1), para_state, sent_state, ent_state], dim=1)
-        node_mask = torch.cat([torch.ones(N, 1).to(self.config.device), batch['para_mask'], batch['sent_mask'], batch['ent_mask']], dim=-1).unsqueeze(-1)
-
-        graph_adj = batch['graphs']
-        assert graph_adj.size(1) == node_mask.size(1)
-
-        graph_state = self.gat(graph_state, graph_adj, node_mask=node_mask, query_vec=query_vec) # N x (1+max_para+max_sent) x d
-        
-        return {'graph_state': graph_state,
-                'node_mask': node_mask,
-                'max_para_num': max_para_num,
-                'max_sent_num': max_sent_num,
-                'N': N}
-
-
-class BiAttention(nn.Module):
-    def __init__(self, input_dim, memory_dim, hid_dim, dropout):
-        super(BiAttention, self).__init__()
-        self.dropout = dropout
-        self.input_linear_1 = nn.Linear(input_dim, 1, bias=False)
-        self.memory_linear_1 = nn.Linear(memory_dim, 1, bias=False)
-
-        self.input_linear_2 = nn.Linear(input_dim, hid_dim, bias=True)
-        self.memory_linear_2 = nn.Linear(memory_dim, hid_dim, bias=True)
-
-        self.dot_scale = np.sqrt(input_dim)
-
-    def forward(self, input, memory, mask):
-        """
-        :param input: context_encoding N * Ld * d
-        :param memory: query_encoding N * Lm * d
-        :param mask: query_mask N * Lm
-        :return:
-        """
-        bsz, input_len, memory_len = input.size(0), input.size(1), memory.size(1)
-
-        input = F.dropout(input, self.dropout, training=self.training)  # N x Ld x d
-        memory = F.dropout(memory, self.dropout, training=self.training)  # N x Lm x d
-
-        input_dot = self.input_linear_1(input)  # N x Ld x 1
-        memory_dot = self.memory_linear_1(memory).view(bsz, 1, memory_len)  # N x 1 x Lm
-        # N * Ld * Lm
-        cross_dot = torch.bmm(input, memory.permute(0, 2, 1).contiguous()) / self.dot_scale
-        # [f1, f2]^T [w1, w2] + <f1 * w3, f2>
-        # (N * Ld * 1) + (N * 1 * Lm) + (N * Ld * Lm)
-        att = input_dot + memory_dot + cross_dot  # N x Ld x Lm
-        # N * Ld * Lm
-        att = att - 1e30 * (1 - mask[:, None])
-
-        input = self.input_linear_2(input)
-        memory = self.memory_linear_2(memory)
-
-        weight_one = F.softmax(att, dim=-1)
-        output_one = torch.bmm(weight_one, memory)
-        weight_two = F.softmax(att.max(dim=-1)[0], dim=-1).view(bsz, 1, input_len)
-        output_two = torch.bmm(weight_two, input)
-
-        return torch.cat([input, output_one, input*output_one, output_two*output_one], dim=-1), memory
-
-
-class RNNWrapper(nn.Module):
-    def __init__(self, input_dim, hidden_dim, n_layer, concat=False, bidir=True, dropout=0.3, return_last=True):
-        super(RNNWrapper, self).__init__()
-        self.rnns = nn.ModuleList()
-        for i in range(n_layer):
-            if i == 0:
-                input_dim_ = input_dim
-                output_dim_ = hidden_dim
-            else:
-                input_dim_ = hidden_dim if not bidir else hidden_dim * 2
-                output_dim_ = hidden_dim
-            self.rnns.append(nn.GRU(input_dim_, output_dim_, 1, bidirectional=bidir, batch_first=True))
-        self.dropout = dropout
-        self.concat = concat
-        self.n_layer = n_layer
-        self.return_last = return_last
-
-    def forward(self, input, input_lengths=None):
-        # input_length must be in decreasing order
-        bsz, slen = input.size(0), input.size(1)
-        output = input
-        outputs = []
-
-        if input_lengths is not None:
-            lens = input_lengths.data.cpu().numpy()
-
-        for i in range(self.n_layer):
-            output = F.dropout(output, p=self.dropout, training=self.training)
-
-            if input_lengths is not None:
-                output = rnn.pack_padded_sequence(output, lens, batch_first=True)
-
-            # logger.info("Show layer number")
-            # logger.info(i)
-            # logger.info(output)
-            output, _ = self.rnns[i](output)
-
-            if input_lengths is not None:
-                output, _ = rnn.pad_packed_sequence(output, batch_first=True)
-                if output.size(1) < slen:  # used for parallel
-                    padding = Variable(output.data.new(1, 1, 1).zero_())
-                    output = torch.cat([output, padding.expand(output.size(0), slen-output.size(1), output.size(2))], dim=1)
-
-            outputs.append(output)
-        if self.concat:
-            return torch.cat(outputs, dim=2)
-        return outputs[-1]
-
-
-class PredictionLayer(nn.Module):
-    """
-    Identical to baseline prediction layer
-    """
-    def __init__(self, config, q_dim):
-        super(PredictionLayer, self).__init__()
-        self.config = config
-        input_dim = config.input_dim
-        h_dim = config.hidden_dim
-
-        self.hidden = h_dim
-
-        self.start_linear = OutputLayer(input_dim, config, num_answer=1)
-        self.end_linear = OutputLayer(input_dim, config, num_answer=1)
-        self.type_linear = OutputLayer(input_dim, config, num_answer=4)
-
-        self.cache_S = 0
-        self.cache_mask = None
-
-    def get_output_mask(self, outer):
-        S = outer.size(1)
-        if S <= self.cache_S:
-            return Variable(self.cache_mask[:S, :S], requires_grad=False)
-        self.cache_S = S
-        np_mask = np.tril(np.triu(np.ones((S, S)), 0), 15)
-        self.cache_mask = outer.data.new(S, S).copy_(torch.from_numpy(np_mask))
-        return Variable(self.cache_mask, requires_grad=False)
-
-    def forward(self, batch, context_input, packing_mask=None, return_yp=False):
-        context_mask = batch['context_mask']
-        context_lens = batch['context_lens']
-        sent_mapping = batch['sent_mapping']
-
-
-        start_prediction = self.start_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
-        end_prediction = self.end_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
-        type_prediction = self.type_linear(context_input[:, 0, :])
-
-        if not return_yp:
-            return start_prediction, end_prediction, type_prediction
-
-        outer = start_prediction[:, :, None] + end_prediction[:, None]
-        outer_mask = self.get_output_mask(outer)
-        outer = outer - 1e30 * (1 - outer_mask[None].expand_as(outer))
-        if packing_mask is not None:
-            outer = outer - 1e30 * packing_mask[:, :, None]
-        # yp1: start
-        # yp2: end
-        yp1 = outer.max(dim=2)[0].max(dim=1)[1]
-        yp2 = outer.max(dim=1)[0].max(dim=1)[1]
-        return start_prediction, end_prediction, type_prediction, yp1, yp2
-
-def get_weights(size, gain=1.414):
-    weights = nn.Parameter(torch.zeros(size=size))
-    nn.init.xavier_uniform_(weights, gain=gain)
-    return weights
-
-
-def get_bias(size):
-    bias = nn.Parameter(torch.zeros(size=size))
-    return bias
-
-
-def get_act(act):
-    if act.startswith('lrelu'):
-        return nn.LeakyReLU(float(act.split(':')[1]))
-    elif act == 'relu':
-        return nn.ReLU()
-    else:
-        raise NotImplementedError

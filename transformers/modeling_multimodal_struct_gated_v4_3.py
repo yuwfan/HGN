@@ -517,6 +517,7 @@ class BertLayer(nn.Module):
         self.adapter_text_bottom = Adapter(config_adapters)
         self.adapter_graph_bottom = Adapter(config_adapters)
 
+
         self.adapter_graph_top = StructAdapt(config, hgn_config)
         self.adapter_text_top = nn.Sequential(
                                         nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps),
@@ -538,7 +539,6 @@ class BertLayer(nn.Module):
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
 
-
         # self.adapter_bimodal = BiModalAdapter(config_adapters, hgn_config)
         
     def forward(
@@ -558,10 +558,10 @@ class BertLayer(nn.Module):
 
         # Textual Outputs
         self_attention_outputs_text = self.attention(text_hidden_states, attention_mask, head_mask)
-        # del text_hidden_states
+        del text_hidden_states
         attention_output_text = self_attention_outputs_text[0]
         outputs_text = self_attention_outputs_text[1:]  # add self attentions if we output attention weights
-        # del self_attention_outputs_text
+        del self_attention_outputs_text
 
         if self.is_decoder and encoder_hidden_states is not None:
             cross_attention_outputs_text = self.crossattention(
@@ -572,12 +572,12 @@ class BertLayer(nn.Module):
 
         # Graphical Outputs
         self_attention_outputs_graph = self.attention(graph_hidden_states, attention_mask, head_mask)
-        # del graph_hidden_states
+        del graph_hidden_states
         attention_output_graph = self_attention_outputs_graph[0]
         outputs_graph = self_attention_outputs_graph[1:]  # add self attentions if we output attention weights
-        # del self_attention_outputs_graph
+        del self_attention_outputs_graph
 
-        if self.is_decoder and encoder_hidden_states is not None:
+        if self.is_decoder and encoder_hidden_states is not None:   
             cross_attention_outputs_graph = self.crossattention(
                 attention_output_graph, attention_mask, head_mask, encoder_hidden_states, encoder_attention_mask
             )
@@ -598,25 +598,22 @@ class BertLayer(nn.Module):
         #### Top Adapter
         # graphs_outoutout, graph_out_dict = self.adapter_bimodal(layer_output_text, layer_output_graph, batch)
 
-
-
         #####
         layer_output_text_bi = self.adapter_text_top(layer_output_text) # text adapter
-
         graph_out_dict = self.adapter_graph_top(layer_output_graph, batch) # graph adapter    
-
         gated_output_graph = self.adapter_gated_attention(layer_output_text_bi,
                                                  graph_out_dict['graph_state'],
                                                  graph_out_dict['node_mask'].squeeze(-1)) # fusing layer
         gated_output_graph = self.dropout(self.projection(gated_output_graph)) # Inverted Btle-neck layer
         
+        
         layer_output_text_bi = self.dropout(self.projection(layer_output_text_bi)) # Inverted Bottle-neck layer
 
-        fusion_output = gated_output_graph + layer_output_text # residual connection
+        layer_output = gated_output_graph + layer_output_text # residual connection
 
 
         outputs_text = (layer_output_text_bi,) + outputs_text
-        outputs_graph = (fusion_output,) + outputs_graph
+        outputs_graph = (layer_output,) + outputs_graph
 
         return (outputs_text, outputs_graph, graph_out_dict)
 

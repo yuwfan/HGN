@@ -5,7 +5,6 @@ import sys
 import os
 import shutil
 import json
-import ipdb
 
 from os.path import join
 from tqdm import tqdm, trange
@@ -15,7 +14,7 @@ from csr_mhqa.argument_parser import default_train_parser, complete_default_trai
 from csr_mhqa.data_processing import Example, InputFeatures, DataHelper
 from csr_mhqa.utils import load_encoder_model, convert_to_tokens, hotpot_eval, MODEL_CLASSES, IGNORE_INDEX
 from models.PredictionLayerOnly import *
-from transformers import get_linear_schedule_with_warmup, MultiModalStructAdaptRobertaGated_v1_1, AdamW
+from transformers import get_linear_schedule_with_warmup, MultiModalStructAdaptRobertaGated_v4_3, AdamW
 from envs import DATASET_FOLDER
 
 import neptune.new as neptune
@@ -26,6 +25,11 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+###################
+# Training set of params, but taking away the top adapters
+###################
+
+
 
 def get_training_params(graphqa, print_stats=False):
     params = []
@@ -34,11 +38,10 @@ def get_training_params(graphqa, print_stats=False):
 
     num_training_params = 0
     num_fronzen_params = 0
-    num_params_hgn = 0
+    
     training_params = ['adapter', 'predict_layer']
     dict_params = {p: 0 for p in training_params}
 
-    # ipdb.set_trace()
     for n, p in graphqa.named_parameters():
         trained = False
         for trained_param in training_params:
@@ -51,14 +54,9 @@ def get_training_params(graphqa, print_stats=False):
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
+
         
     if print_stats:
-        # all
-        # pytorch_total_params = sum(p.numel() for p in model.parameters())
-        logger.info(f"Number of preditc params: {dict_params['predict_layer']/1e6:.2f}M")
-        run["model/weights/predict_params"] = f"{dict_params['predict_layer']/1e6:.2f}M"
-        logger.info(f"Number of adapter params: {dict_params['adapter']/1e6:.2f}M")
-        run["model/weights/adapter_params"] = f"{dict_params['adapter']/1e6:.2f}M"
         num_total_params = num_training_params + num_fronzen_params
         logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")
         run["model/weights/num_training_params"] = f"{num_training_params/1e6:.2f}M"
@@ -86,12 +84,12 @@ def get_optimizer(model, args, learning_rate, remove_pooler=False):
     """
     num_training_params = 0
     params_name, params = get_training_params(model, print_stats=True)
-    # logger.info(f"Name of the training parameters: {params_name}")
+    #logger.info(f"Name of the training parameters: {params_name}")
 
     for p in params:
         num_training_params += p.numel()
     logger.info(f"Number of parameters in the model: {num_training_params/1e6:.2f}M")
-    # logger.info(f"Name of the training parameters: {params_name}")
+    #logger.info(f"Name of the training parameters: {params_name}")
 
     no_decay = ["bias", "LayerNorm.weight"]
     weight_decay = 0
@@ -260,7 +258,7 @@ else:
     learning_rate = args.learning_rate
 
 # Set Encoder and Model
-model = MultiModalStructAdaptRobertaGated_v1_1(args)
+model = MultiModalStructAdaptRobertaGated_v4_3(args)
 model.to(args.device)
 
 _, _, tokenizer_class = MODEL_CLASSES[args.model_type]
@@ -276,7 +274,6 @@ if args.max_steps > 0:
     args.num_train_epochs = args.max_steps // (len(train_dataloader) // args.gradient_accumulation_steps) + 1
 else:
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
-
 
 optimizer = get_optimizer(model, args, learning_rate, remove_pooler=False)
 

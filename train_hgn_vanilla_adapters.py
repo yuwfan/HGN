@@ -15,8 +15,7 @@ from csr_mhqa.argument_parser import default_train_parser, complete_default_trai
 from csr_mhqa.data_processing import Example, InputFeatures, DataHelper
 from csr_mhqa.utils import load_encoder_model, convert_to_tokens, hotpot_eval, MODEL_CLASSES, IGNORE_INDEX
 from models.PredictionLayerOnly import *
-from transformers import get_linear_schedule_with_warmup, MultiModalStructAdaptRobertaGated_v1_1, AdamW
-from envs import DATASET_FOLDER
+from transformers import get_linear_schedule_with_warmup, VanillaAdapter_HGN_v2, AdamW
 
 import neptune.new as neptune
 from neptune.new.integrations.python_logger import NeptuneHandler
@@ -27,6 +26,7 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
 logger = logging.getLogger(__name__)
 
 
+
 def get_training_params(graphqa, print_stats=False):
     params = []
     params_name = []
@@ -35,9 +35,8 @@ def get_training_params(graphqa, print_stats=False):
     num_training_params = 0
     num_fronzen_params = 0
     num_params_hgn = 0
-    training_params = ['adapter', 'predict_layer']
+    training_params = ['adapter','predict_layer']
     dict_params = {p: 0 for p in training_params}
-
     # ipdb.set_trace()
     for n, p in graphqa.named_parameters():
         trained = False
@@ -51,15 +50,13 @@ def get_training_params(graphqa, print_stats=False):
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
-        
+
+    
     if print_stats:
-        # all
-        # pytorch_total_params = sum(p.numel() for p in model.parameters())
-        logger.info(f"Number of preditc params: {dict_params['predict_layer']/1e6:.2f}M")
-        run["model/weights/predict_params"] = f"{dict_params['predict_layer']/1e6:.2f}M"
-        logger.info(f"Number of adapter params: {dict_params['adapter']/1e6:.2f}M")
-        run["model/weights/adapter_params"] = f"{dict_params['adapter']/1e6:.2f}M"
         num_total_params = num_training_params + num_fronzen_params
+        for trai in training_params:
+            logger.info(f"Number of {trai} parameters: {dict_params[trai]/1e6:.2f}M")
+            run[f"model/weights/num_{trai}_params"] = f"{dict_params[trai]/1e6:.2f}M"
         logger.info(f"Number of training parameters: {num_training_params/1e6:.2f}M")
         run["model/weights/num_training_params"] = f"{num_training_params/1e6:.2f}M"
         logger.info(f"Number of frozen parameters: {num_fronzen_params/1e6:.2f}M")
@@ -72,7 +69,7 @@ def get_training_params(graphqa, print_stats=False):
             run[f"model/weights/{k}_params"] = f"{v/1e6:.2f}M"
         logger.info(f"-----------------------")
         logger.info(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
-        run["model/weights/ratio_learned_params"] = f"{ num_training_params / num_fronzen_params:.2f}"
+        run["model/weights/ratio_learned_params"] = num_training_params / num_fronzen_params
     return params_name, params
 
 def get_optimizer(model, args, learning_rate, remove_pooler=False):
@@ -86,12 +83,11 @@ def get_optimizer(model, args, learning_rate, remove_pooler=False):
     """
     num_training_params = 0
     params_name, params = get_training_params(model, print_stats=True)
-    # logger.info(f"Name of the training parameters: {params_name}")
 
     for p in params:
         num_training_params += p.numel()
     logger.info(f"Number of parameters in the model: {num_training_params/1e6:.2f}M")
-    # logger.info(f"Name of the training parameters: {params_name}")
+    logger.info(f"Name of the training parameters: {params_name}")
 
     no_decay = ["bias", "LayerNorm.weight"]
     weight_decay = 0
@@ -107,8 +103,6 @@ def get_optimizer(model, args, learning_rate, remove_pooler=False):
 
     return optimizer
 
-
-## Monitoring loss, IF NAN 
 def compute_loss(args, batch, start, end, para, sent, ent, q_type):
     criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=IGNORE_INDEX)
     loss_span = args.ans_lambda * (criterion(start, batch['y1']) + criterion(end, batch['y2']))
@@ -126,7 +120,7 @@ def compute_loss(args, batch, start, end, para, sent, ent, q_type):
     return loss, loss_span, loss_type, loss_sup, loss_ent, loss_para
 
 
-def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_file, eval_file, dev_gold_file, thresholds=None):
+def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_file, eval_file, dev_gold_file):
     model.eval()
 
     answer_dict = {}
@@ -135,17 +129,14 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
 
     dataloader.refresh()
 
-    if thresholds is None:
-        thresholds = np.arange(0.1, 1.0, 0.05)
-    else:
-        thresholds = np.array([thresholds])
+    thresholds = np.arange(0.1, 1.0, 0.05)
     N_thresh = len(thresholds)
     total_sp_dict = [{} for _ in range(N_thresh)]
 
     for batch in tqdm(dataloader, file=sys.stdout):
         with torch.no_grad():
             batch['context_mask'] = batch['context_mask'].float().to(args.device)
-            start_prediction, end_prediction, type_prediction, para, sent, ent, yp1, yp2 = model(batch=batch, return_yp=True)
+            start_prediction, end_prediction, type_prediction, para, sent, ent, yp1, yp2 = model(batch, return_yp=True)
         type_prob = F.softmax(type_prediction, dim=1).data.cpu().numpy()
         answer_dict_, answer_type_dict_, answer_type_prob_dict_ = convert_to_tokens(example_dict, feature_dict, batch['ids'],
                                                                                     yp1.data.cpu().numpy().tolist(),
@@ -203,9 +194,8 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
     return best_metrics, best_threshold, answer_dict
 
 
-run = neptune.init(tags=["StructAdapt-fast", "MultiModal", "LSTM", "gated"])
+run = neptune.init(tags=["HGN", "UniModal", "Vanilla Adapter"])
 logger.addHandler(NeptuneHandler(run=run))
-
 #########################################################################
 # Initialize arguments
 ##########################################################################
@@ -260,7 +250,7 @@ else:
     learning_rate = args.learning_rate
 
 # Set Encoder and Model
-model = MultiModalStructAdaptRobertaGated_v1_1(args)
+model = VanillaAdapter_HGN_v2(args)
 model.to(args.device)
 
 _, _, tokenizer_class = MODEL_CLASSES[args.model_type]
@@ -276,7 +266,6 @@ if args.max_steps > 0:
     args.num_train_epochs = args.max_steps // (len(train_dataloader) // args.gradient_accumulation_steps) + 1
 else:
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
-
 
 optimizer = get_optimizer(model, args, learning_rate, remove_pooler=False)
 
@@ -294,14 +283,11 @@ if args.local_rank in [-1, 0]:
     tb_writer = SummaryWriter(args.exp_name)
 
 model.zero_grad()
-list_few_shot_eval = np.array([100])/args.batch_size
-logger.info(f"Few-shot evaluation at {list_few_shot_eval}")
+list_few_shot_eval = np.array([100, 500, 1000, 2000, 3000])/args.batch_size
 
-best_f1 = 0
-best_threshold = 0
 train_iterator = trange(start_epoch, start_epoch+int(args.num_train_epochs), desc="Epoch", file=sys.stdout, disable=args.local_rank not in [-1, 0])
 for epoch in train_iterator:
-    epoch_iterator = tqdm(train_dataloader, desc="Iteration", file=sys.stdout, disable=args.local_rank not in [-1, 0])
+    epoch_iterator = tqdm(train_dataloader, desc="Iteration",file=sys.stdout, disable=args.local_rank not in [-1, 0])
     train_dataloader.refresh()
     dev_dataloader.refresh()
 
@@ -309,7 +295,8 @@ for epoch in train_iterator:
         model.train()
 
         batch['context_mask'] = batch['context_mask'].float().to(args.device)
-        start, end, q_type, paras, sents, ents, _, _ = model(batch=batch, return_yp=True)
+        start, end, q_type, paras, sents, ents, _, _ = model(batch, return_yp=True)
+
         loss_list = compute_loss(args, batch, start, end, paras, sents, ents, q_type)
         del batch
 
@@ -321,9 +308,9 @@ for epoch in train_iterator:
                 tr_loss[idx] += loss_list[idx].data.item()
             else:
                 tr_loss[idx] += loss_list[idx]
-
             run["train/epoch/"+loss_name[idx]].log(loss_list[idx].data.item())
             run["train/epoch/lr"].log(scheduler.get_lr()[0])
+
         if (step + 1) % args.gradient_accumulation_steps == 0:
             optimizer.step()
             scheduler.step()  # Update learning rate schedule
@@ -356,41 +343,41 @@ for epoch in train_iterator:
             for key, value in metrics.items():
                 run[f"dev/few_shot/{key}"].log(round(value*100, 2))
             run["dev/few_shot/preds"].log(answer_dict)
+
             model.train()
 
     torch.save({k: v.cpu() for k, v in model.state_dict().items()},
                 join(args.exp_name, f'model_{epoch+1}.pkl'))
     if args.local_rank == -1 or torch.distributed.get_rank() == 0:
         output_pred_file = os.path.join(args.exp_name, f'pred.epoch_{epoch+1}.json')
-        output_eval_file = os.path.join(args.exp_name, f'eval.epoch_{epoch+1}.json')
+        output_eval_file = os.path.join(args.exp_name, f'eval.epoch_{epoch+1}.txt')
         metrics, threshold, answer_dict = eval_model(args, model,
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
         for key, value in metrics.items():
-            run[f"dev/{key}"].log(round(value*100, 2))
-        run["dev/preds"].log(answer_dict)
-        logger.info(f"Current f1: {metrics['f1']}, best f1: {best_f1}. Saving: {best_f1 <= metrics['f1']}")
-        if metrics['f1'] >= best_f1:
-            best_f1 = metrics['f1']
-            best_epoch = epoch
-            best_threshold = threshold
-            model_path = os.path.join(args.exp_name, 'best_model.bin')
-            logger.info(f"Saving model {model_path}")
-            torch.save(model.state_dict(), model_path)
-        model.train()
+            run[f"dev/epoch/{key}"].log(round(value*100, 2))
+        run["dev/epoch/preds"].log(answer_dict)
 
+        if metrics['joint_f1'] >= best_joint_f1:
+            best_joint_f1 = metrics['joint_f1']
+            torch.save({'epoch': epoch+1,
+                        'lr': scheduler.get_lr()[0],
+                        'model': 'model.pkl',
+                        'best_joint_f1': best_joint_f1,
+                        'threshold': threshold},
+                       join(args.exp_name, f'cached_config.bin')
+            )
+        with open(join(args.exp_name, f'metrics.json'), 'w+') as f:
+            json.dump(metrics, f)
+        # torch.save({k: v.cpu() for k, v in encoder.state_dict().items()},
+        #             join(args.exp_name, f'encoder_{epoch+1}.pkl'))
+        # torch.save({k: v.cpu() for k, v in model.state_dict().items()},
+        #             join(args.exp_name, f'model_{epoch+1}.pkl'))
 
-model_path = os.path.join(args.exp_name, 'best_model.bin')
-model.load_state_dict(torch.load(model_path))
-test_example_dict = helper.test_example_dict
-test_feature_dict = helper.test_feature_dict
-test_dataloader = helper.test_loader
+        for key, val in metrics.items():
+            tb_writer.add_scalar(key, val, epoch)
 
-metrics, threshold, answer_dict = eval_model(args, model,
-                                test_dataloader, test_example_dict, test_feature_dict,
-                                output_pred_file, output_eval_file, args.test_gold_file, best_threshold)
-logger.info(f"Best threshold: {best_threshold} vs. {threshold}")
-for key, value in metrics.items():
-    run[f"test/{key}"] = round(value*100, 2)
-run["test/preds"] = answer_dict
+if args.local_rank in [-1, 0]:
+    tb_writer.close()
+
 run.stop()

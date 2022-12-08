@@ -167,14 +167,17 @@ if is_torch_available():
     # from .modeling_adapter_vanilla_hgn import (
     #     VanillaAdapter_HGN,
     # )
-    # from .modeling_adapter_vanilla_hgn_v2 import (
-    #     VanillaAdapter_HGN_v2,
-    # )
+    from .modeling_adapter_vanilla_hgn_v2 import (
+        VanillaAdapter_HGN_v2,
+    )
     # from .modeling_structadapt_roberta import (
     #     StructAdaptRoberta,
     # )
     from .modeling_multimodal_structadapt_Roberta import (
         MultiModalStructAdaptRoberta,
+    )        
+    from .modeling_multi_struct_Rob_AF import (
+        MultiModalStructAdaptRoberta_AF,
     )    
     from .modeling_multimodal_gated import (
         MultiModalStructAdaptRobertaGated,
@@ -184,6 +187,12 @@ if is_torch_available():
     )
     from .modeling_multimodal_gated_v3 import (
         MultiModalStructAdaptRobertaGated_v3,
+    )        
+    from .modeling_multimodal_gated_v4 import (
+        MultiModalStructAdaptRobertaGated_v4,
+    )        
+    from .modeling_multimodal_gated_v4_3 import (
+        MultiModalStructAdaptRobertaGated_v4_3,
     )    
     from .modeling_multimodal_gated_v3_3 import (
         MultiModalStructAdaptRobertaGated_v3_3,
