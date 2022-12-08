@@ -167,6 +167,9 @@ if is_torch_available():
     # from .modeling_adapter_vanilla_hgn import (
     #     VanillaAdapter_HGN,
     # )
+    from .modeling_MM_roberta_v1_base import (
+        MultiModal_Roberta_v1_base,
+    )
     from .modeling_adapter_vanilla_hgn_v2 import (
         VanillaAdapter_HGN_v2,
     )
