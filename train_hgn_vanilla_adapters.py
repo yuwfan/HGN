@@ -35,9 +35,11 @@ def get_training_params(graphqa, print_stats=False):
     num_training_params = 0
     num_fronzen_params = 0
     num_params_hgn = 0
-    training_params = ['adapter','predict_layer']
+    training_params = ['adapter','predict_layer', 'hgn']
     dict_params = {p: 0 for p in training_params}
+
     # ipdb.set_trace()
+
     for n, p in graphqa.named_parameters():
         trained = False
         for trained_param in training_params:
@@ -50,7 +52,6 @@ def get_training_params(graphqa, print_stats=False):
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
-
     
     if print_stats:
         num_total_params = num_training_params + num_fronzen_params
@@ -87,7 +88,7 @@ def get_optimizer(model, args, learning_rate, remove_pooler=False):
     for p in params:
         num_training_params += p.numel()
     logger.info(f"Number of parameters in the model: {num_training_params/1e6:.2f}M")
-    logger.info(f"Name of the training parameters: {params_name}")
+    # logger.info(f"Name of the training parameters: {params_name}")
 
     no_decay = ["bias", "LayerNorm.weight"]
     weight_decay = 0
@@ -249,6 +250,63 @@ else:
     best_joint_f1 = 0
     learning_rate = args.learning_rate
 
+
+# Relevant for matching parameter size of model
+def change_argument(argument_name, new_argument, args_temp):
+    # argument_name = '--adapter_size'
+    # new_argument = '32'
+    for i, ar in enumerate(argv):
+        if ar == argument_name:
+            argv[i+1] = new_argument
+
+    args_temp = parser.parse_args(argv)
+    args_temp = complete_default_train_parser(args_temp)
+    # run["model/parameters"] = vars(args)
+
+    logger.info('-' * 100)
+    logger.info('Input Argument Information')
+    logger.info('-' * 100)
+    args_dict = vars(args_temp)
+    for a in args_dict:
+        logger.info('%-28s  %s' % (a, args_dict[a]))
+    return args_temp
+
+def Init_Model(ar):
+    cached_config_file = join(ar.exp_name, 'cached_config.bin')
+    if os.path.exists(cached_config_file):
+        cached_config = torch.load(cached_config_file)
+        encoder_path = join(ar.exp_name, cached_config['encoder'])
+        model_path = join(ar.exp_name, cached_config['model'])
+        learning_rate = cached_config['lr']
+        start_epoch = cached_config['epoch']
+        best_joint_f1 = cached_config['best_joint_f1']
+        logger.info("Loading encoder from: {}".format(encoder_path))
+        logger.info("Loading model from: {}".format(model_path))
+    else:
+        encoder_path = None
+        model_path = None
+        start_epoch = 0
+        best_joint_f1 = 0
+        learning_rate = ar.learning_rate
+    return ar    
+
+
+
+# #######################     Check sizes of model:   #############################
+# # Step by step instructions for new Model with different size:
+# # 1.) Name it and chenge args
+# a64 = change_argument( '--adapter_size', '', None)
+# # 2.) Initialize model
+# Init_Model(a64)
+# # 3.) Create model
+# model = VanillaAdapter_HGN_v2(a64)
+# # 4.) Output parameters
+# optimizer = get_optimizer(model, a64, learning_rate, remove_pooler=False)
+# # ################################################################################
+
+
+
+# ipdb.set_trace()
 # Set Encoder and Model
 model = VanillaAdapter_HGN_v2(args)
 model.to(args.device)
