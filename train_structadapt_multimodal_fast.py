@@ -5,6 +5,7 @@ import sys
 import os
 import shutil
 import json
+import ipdb
 
 from os.path import join
 from tqdm import tqdm, trange
@@ -26,17 +27,20 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
 logger = logging.getLogger(__name__)
 
 
-def get_training_params(graphqa, print_stats=False):
+
+def get_t_p(graphqa, print_stats=False):
     params = []
     params_name = []
     params_name_frozen = []
 
     num_training_params = 0
     num_fronzen_params = 0
-    num_params_hgn = 0
-    training_params = ['adapter', 'pred_layer']
+    training_params = ['adapter', 'predict_layer', 'hgn']
     dict_params = {p: 0 for p in training_params}
 
+
+    predict_projectlayer = 0
+    hgn_adapter = 0
     for n, p in graphqa.named_parameters():
         trained = False
         for trained_param in training_params:
@@ -46,9 +50,91 @@ def get_training_params(graphqa, print_stats=False):
                 params.append(p)
                 params_name.append(n)
                 dict_params[trained_param] += p.numel()
+        if 'predict_layer' in n:
+            print(n, p.numel())
+        if 'predict_layer' in n and 'projectionlayer_in' in n:
+            predict_projectlayer += p.numel()
+            # print(n, p.numel())
+        if 'hgn' in n and 'adapter' in n:
+            hgn_adapter += p.numel()
+            # print(n, p.numel())
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
+    dict_params["predict_layer"] -= predict_projectlayer
+    dict_params["hgn"] += predict_projectlayer
+    
+    # for n, p in graphqa.named_parameters():
+    #     trained = False
+    #     for trained_param in training_params:
+    #         if trained_param in n:
+    #             num_training_params += p.numel()
+    #             trained = True
+    #             params.append(p)
+    #             params_name.append(n)
+    #             if "projectionlayer_in" in n:
+    #                 dict_params['hgn'] += p.numel()
+    #             else:
+    #                 dict_params[trained_param] += p.numel()
+        # if not trained:
+        #     num_fronzen_params += p.numel()
+        #     params_name_frozen.append(n)
+
+
+
+    dict_params["frozen"] = num_fronzen_params
+    return dict_params
+
+
+def get_training_params(graphqa, print_stats=False):
+    params = []
+    params_name = []
+    params_name_frozen = []
+
+    num_training_params = 0
+    num_fronzen_params = 0
+    num_params_hgn = 0
+    training_params = ['adapter', 'predict_layer', 'hgn']
+    dict_params = {p: 0 for p in training_params}
+
+    predict_projectlayer = 0
+    hgn_adapter = 0
+    for n, p in graphqa.named_parameters():
+        trained = False
+        for trained_param in training_params:
+            if trained_param in n:
+                num_training_params += p.numel()
+                trained = True
+                params.append(p)
+                params_name.append(n)
+                dict_params[trained_param] += p.numel()
+        # if 'predict_layer' in n:
+        #     print("predict_layer: ",n, p.numel())
+        if 'predict_layer' in n and 'projectionlayer_in' in n:
+            predict_projectlayer += p.numel()
+            print(n, p.numel())
+        if 'hgn' in n and 'adapter' in n:
+            hgn_adapter += p.numel()
+            print("hgn: ", n, p.numel())
+        if not trained:
+            num_fronzen_params += p.numel()
+            params_name_frozen.append(n)
+    dict_params["predict_layer"] -= predict_projectlayer
+    dict_params["hgn"] += predict_projectlayer
+
+    # ipdb.set_trace()
+    # for n, p in graphqa.named_parameters():
+    #     trained = False
+    #     for trained_param in training_params:
+    #         if trained_param in n:
+    #             num_training_params += p.numel()
+    #             trained = True
+    #             params.append(p)
+    #             params_name.append(n)
+    #             dict_params[trained_param] += p.numel()
+    #     if not trained:
+    #         num_fronzen_params += p.numel()
+    #         params_name_frozen.append(n)
         
     if print_stats:
         num_total_params = num_training_params + num_fronzen_params
@@ -62,10 +148,13 @@ def get_training_params(graphqa, print_stats=False):
         for k, v in dict_params.items():
             logger.info(f"Number of {k} parameters: {v/1e6:.2f}M")
             run[f"model/weights/{k}_params"] = f"{v/1e6:.2f}M"
+        logger.info(f"Number of predict_projectlayer parameters: {predict_projectlayer/1e6:.2f}M")
+        logger.info(f"Number of hgn_adapter parameters: {hgn_adapter/1e6:.2f}M")        
         logger.info(f"-----------------------")
         logger.info(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
         run["model/weights/ratio_learned_params"] = f"{ num_training_params / num_fronzen_params:.2f}"
     return params_name, params
+
 
 def get_optimizer(model, args, learning_rate, remove_pooler=False):
     """
@@ -78,12 +167,12 @@ def get_optimizer(model, args, learning_rate, remove_pooler=False):
     """
     num_training_params = 0
     params_name, params = get_training_params(model, print_stats=True)
-    logger.info(f"Name of the training parameters: {params_name}")
+    # logger.info(f"Name of the training parameters: {params_name}")
 
     for p in params:
         num_training_params += p.numel()
     logger.info(f"Number of parameters in the model: {num_training_params/1e6:.2f}M")
-    logger.info(f"Name of the training parameters: {params_name}")
+    # logger.info(f"Name of the training parameters: {params_name}")
 
     no_decay = ["bias", "LayerNorm.weight"]
     weight_decay = 0
@@ -192,6 +281,26 @@ def eval_model(args, model, dataloader, example_dict, feature_dict, prediction_f
 
     return best_metrics, best_threshold, answer_dict
 
+def change_argument(args_list, args_temp):
+    # argument_name = '--adapter_size'
+    # new_argument = '32'
+    for new_arg in args_list:
+        for i, ar in enumerate(argv):
+            if ar == new_arg[0]:
+                argv[i+1] = new_arg[1]
+
+    args_temp = parser.parse_args(argv)
+    args_temp = complete_default_train_parser(args_temp)
+    # run["model/parameters"] = vars(args)
+
+    logger.info('-' * 100)
+    logger.info('Input Argument Information')
+    logger.info('-' * 100)
+    args_dict = vars(args_temp)
+    for a in args_dict:
+        logger.info('%-28s  %s' % (a, args_dict[a]))
+    return args_temp
+
 
 run = neptune.init(tags=["StructAdapt-fast", "MultiModal", "LSTM", "base"])
 logger.addHandler(NeptuneHandler(run=run))
@@ -218,6 +327,24 @@ args_dict = vars(args)
 for a in args_dict:
     logger.info('%-28s  %s' % (a, args_dict[a]))
 
+def Init_Model(ar):
+    cached_config_file = join(ar.exp_name, 'cached_config.bin')
+    if os.path.exists(cached_config_file):
+        cached_config = torch.load(cached_config_file)
+        encoder_path = join(ar.exp_name, cached_config['encoder'])
+        model_path = join(ar.exp_name, cached_config['model'])
+        learning_rate = cached_config['lr']
+        start_epoch = cached_config['epoch']
+        best_joint_f1 = cached_config['best_joint_f1']
+        logger.info("Loading encoder from: {}".format(encoder_path))
+        logger.info("Loading model from: {}".format(model_path))
+    else:
+        encoder_path = None
+        model_path = None
+        start_epoch = 0
+        best_joint_f1 = 0
+        learning_rate = ar.learning_rate
+    return ar
 #########################################################################
 # Read Data
 ##########################################################################
@@ -249,9 +376,46 @@ else:
     best_joint_f1 = 0
     learning_rate = args.learning_rate
 
+# import ipdb; ipdb.set_trace()
+
 # Set Encoder and Model
 model = MultiModalStructAdaptFastRoberta_v2(args)
 model.to(args.device)
+
+
+def calc_params(params):
+    ar =change_argument(params,None)
+    Init_Model(ar)
+    model = MultiModalStructAdaptFastRoberta_v2(ar)
+    result = get_t_p(model, print_stats=True)
+    del model
+    return result
+
+
+# for i in range(106,300):
+#     with open("Parameter/01_11/multimodal_1.txt", 'a') as f:
+#         params_dict = calc_params([('--adapter_size',str(i)),('--hgn_hidden_size', str(i))])
+#         f.write(str(i)+";")
+#         f.write(str(params_dict)+"\n")
+#         f.close()            
+# import ipdb; ipdb.set_trace()
+
+
+
+# params_dict = calc_params([('--adapter_size','70'),('--hgn_hidden_size', '140')])
+
+# #######################     Check sizes of model:   #############################
+# # Step by step instructions for new Model with different size:
+# # 1.) Name it and chenge args
+# a5=change_argument([('--adapter_size','75'),('--hgn_hidden_size', '150')],None)
+# # 2.) Initialize model
+# Init_Model(a5)
+# # 3.) Create model
+# model = MultiModalStructAdaptFastRoberta_v2(a5)
+# # 4.) Output parameters
+# optimizer = get_optimizer(model, a5, learning_rate, remove_pooler=False)
+# params_name, params = get_training_params(model, print_stats=True)
+# ################################################################################
 
 _, _, tokenizer_class = MODEL_CLASSES[args.model_type]
 tokenizer = tokenizer_class.from_pretrained(args.encoder_name_or_path,

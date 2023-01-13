@@ -25,7 +25,56 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+def get_t_p(graphqa, print_stats=False):
+    params = []
+    params_name = []
+    params_name_frozen = []
 
+    num_training_params = 0
+    num_fronzen_params = 0
+    training_params = ['hgn', 'adapter', 'predict_layer']
+    dict_params = {p: 0 for p in training_params}
+
+    predict_projectlayer = 0
+    hgn_adapter = 0
+    for n, p in graphqa.named_parameters():
+        trained = False
+        for trained_param in training_params:
+            if trained_param in n:
+                num_training_params += p.numel()
+                trained = True
+                params.append(p)
+                params_name.append(n)
+                dict_params[trained_param] += p.numel()
+        # if 'predict_layer' in n:
+        #     print(n, p.numel())
+        if 'predict_layer' in n and 'projectionlayer_in' in n:
+            predict_projectlayer += p.numel()
+            # print(n, p.numel())
+        if 'hgn' in n and 'adapter' in n:
+            hgn_adapter += p.numel()
+            # print(n, p.numel())
+        if not trained:
+            num_fronzen_params += p.numel()
+            params_name_frozen.append(n)
+    dict_params["predict_layer"] -= predict_projectlayer
+    dict_params["hgn"] += predict_projectlayer
+
+    # for n, p in graphqa.named_parameters():
+    #     trained = False
+    #     for trained_param in training_params:
+    #         if trained_param in n:
+    #             num_training_params += p.numel()
+    #             trained = True
+    #             params.append(p)
+    #             params_name.append(n)
+    #             dict_params[trained_param] += p.numel()
+    #     if not trained:
+    #         num_fronzen_params += p.numel()
+    #         params_name_frozen.append(n)
+
+    dict_params["frozen"] = num_fronzen_params
+    return dict_params
 
 def get_training_params(graphqa, print_stats=False):
     params = []
@@ -38,8 +87,8 @@ def get_training_params(graphqa, print_stats=False):
     training_params = ['adapter','predict_layer', 'hgn']
     dict_params = {p: 0 for p in training_params}
 
-    # ipdb.set_trace()
-
+    predict_projectlayer = 0
+    hgn_adapter = 0
     for n, p in graphqa.named_parameters():
         trained = False
         for trained_param in training_params:
@@ -49,10 +98,45 @@ def get_training_params(graphqa, print_stats=False):
                 params.append(p)
                 params_name.append(n)
                 dict_params[trained_param] += p.numel()
+        # if 'predict_layer' in n:
+        #     print(n, p.numel())
+        if 'predict_layer' in n and 'projectionlayer_in' in n:
+            predict_projectlayer += p.numel()
+            # print(n, p.numel())
+        if 'hgn' in n and 'adapter' in n:
+            hgn_adapter += p.numel()
+            # print(n, p.numel())
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
+    dict_params["predict_layer"] -= predict_projectlayer
+    dict_params["hgn"] += predict_projectlayer
+
+    # count=0
+    # for n, p in graphqa.named_parameters():
+    #     trained = False
+    #     for trained_param in training_params:
+    #         if trained_param in n:
+    #             num_training_params += p.numel()
+    #             trained = True
+    #             params.append(p)
+    #             params_name.append(n)
+    #             dict_aprams[trained_param] += p.numel()
+    #             if "predict_layer" in n:
+    #                 print(n, p.numel())
+    #                 count += p.numel()
+    #     if not trained:
+    #         num_fronzen_params += p.numel()
+    #         params_name_frozen.append(n)
     
+    # For counting the extra predict layers:
+    # dict_params["hgn_predict"] = 0
+    # for n, p in graphqa.named_parameters():
+    #     trained = False
+    #     if "hgn" in n and "predict_layer" in n:
+    #         dict_params["hgn_predict"] += p.numel()
+
+
     if print_stats:
         num_total_params = num_training_params + num_fronzen_params
         for trai in training_params:
@@ -68,6 +152,8 @@ def get_training_params(graphqa, print_stats=False):
         for k, v in dict_params.items():
             logger.info(f"Number of {k} parameters: {v/1e6:.2f}M")
             run[f"model/weights/{k}_params"] = f"{v/1e6:.2f}M"
+        logger.info(f"Number of predict_projectlayer parameters: {predict_projectlayer/1e6:.2f}M")
+        logger.info(f"Number of hgn_adapter parameters: {hgn_adapter/1e6:.2f}M")
         logger.info(f"-----------------------")
         logger.info(f"Ratio learned parameters: { num_training_params / num_fronzen_params:.2f}")
         run["model/weights/ratio_learned_params"] = num_training_params / num_fronzen_params
@@ -252,12 +338,13 @@ else:
 
 
 # Relevant for matching parameter size of model
-def change_argument(argument_name, new_argument, args_temp):
+def change_argument(args_list, args_temp):
     # argument_name = '--adapter_size'
     # new_argument = '32'
-    for i, ar in enumerate(argv):
-        if ar == argument_name:
-            argv[i+1] = new_argument
+    for new_arg in args_list:
+        for i, ar in enumerate(argv):
+            if ar == new_arg[0]:
+                argv[i+1] = new_arg[1]
 
     args_temp = parser.parse_args(argv)
     args_temp = complete_default_train_parser(args_temp)
@@ -291,7 +378,6 @@ def Init_Model(ar):
     return ar    
 
 
-
 # #######################     Check sizes of model:   #############################
 # # Step by step instructions for new Model with different size:
 # # 1.) Name it and chenge args
@@ -302,11 +388,25 @@ def Init_Model(ar):
 # model = VanillaAdapter_HGN_v2(a64)
 # # 4.) Output parameters
 # optimizer = get_optimizer(model, a64, learning_rate, remove_pooler=False)
-# # ################################################################################
+# #################################################################################
+
+def calc_params(params):
+    ar = change_argument(params,None)
+    Init_Model(ar)
+    model = VanillaAdapter_HGN_v2(ar)
+    result = get_t_p(model, print_stats=True)
+    del model
+    return result
 
 
+# for i in range(190, 400):
+#     with open("Parameter/01_11/vanilla_1.txt", 'a') as f:
+#         params_dict = calc_params([('--adapter_size',str(i)),('--hidden_dim', str(i))])
+#         f.write(str(i)+";")
+#         f.write(str(params_dict)+"\n")
+#         f.close()            
+# import ipdb; ipdb.set_trace()
 
-# ipdb.set_trace()
 # Set Encoder and Model
 model = VanillaAdapter_HGN_v2(args)
 model.to(args.device)
