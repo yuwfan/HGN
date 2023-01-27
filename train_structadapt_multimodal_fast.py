@@ -35,34 +35,68 @@ def get_t_p(graphqa, print_stats=False):
 
     num_training_params = 0
     num_fronzen_params = 0
-    training_params = ['adapter', 'predict_layer', 'hgn']
+    training_params = ['text', 'predict_layer', 'graph', 'fusing']
     dict_params = {p: 0 for p in training_params}
+    
+    def trained_par(n, p, num_training_params, params, params_name):
+        num_training_params += p.numel()
+        params.append(p)
+        params_name.append(n)
+        return True
 
-
-    predict_projectlayer = 0
-    hgn_adapter = 0
     for n, p in graphqa.named_parameters():
         trained = False
-        for trained_param in training_params:
-            if trained_param in n:
-                num_training_params += p.numel()
-                trained = True
-                params.append(p)
-                params_name.append(n)
-                dict_params[trained_param] += p.numel()
-        if 'predict_layer' in n:
-            print(n, p.numel())
-        if 'predict_layer' in n and 'projectionlayer_in' in n:
-            predict_projectlayer += p.numel()
-            # print(n, p.numel())
-        if 'hgn' in n and 'adapter' in n:
-            hgn_adapter += p.numel()
-            # print(n, p.numel())
+        if 'adapter' in n and not 'graph' in n and not 'text' in n or 'predict_layer' in n and 'projectionlayer' in n:
+            # Add fusing layer and according projection layer to 'fusion'-tag
+            dict_params['fusing'] += p.numel()
+            trained = trained_par(n, p, num_training_params, params, params_name)
+        elif 'adapter' in n and not 'graph' in n:
+            dict_params['text'] +=  p.numel()
+            trained = trained_par(n, p, num_training_params, params, params_name)
+        elif 'graph' in n:
+            dict_params['graph'] += p.numel()
+            trained = trained_par(n, p, num_training_params, params, params_name)
+        elif 'predict_layer' in n:
+            dict_params['predict_layer'] += p.numel()
+            trained = trained_par(n, p, num_training_params, params, params_name)
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
-    dict_params["predict_layer"] -= predict_projectlayer
-    dict_params["hgn"] += predict_projectlayer
+
+#     params = []
+#     params_name = []
+#     params_name_frozen = []
+
+#     num_training_params = 0
+#     num_fronzen_params = 0
+#     training_params = ['adapter', 'predict_layer', 'hgn']
+#     dict_params = {p: 0 for p in training_params}
+
+
+#     predict_projectlayer = 0
+#     # hgn_adapter = 0
+#     for n, p in graphqa.named_parameters():
+#         trained = False
+#         for trained_param in training_params:
+#             if trained_param in n:
+#                 num_training_params += p.numel()
+#                 trained = True
+#                 params.append(p)
+#                 params_name.append(n)
+#                 dict_params[trained_param] += p.numel()
+#         if 'predict_layer' in n:
+#             print(n, p.numel())
+#         if 'predict_layer' in n and 'projectionlayer_in' in n:
+#             predict_projectlayer += p.numel()
+#             # print(n, p.numel())
+#         # if 'hgn' in n and 'adapter' in n:
+#         #     hgn_adapter += p.numel()
+#             # print(n, p.numel())
+#         if not trained:
+#             num_fronzen_params += p.numel()
+#             params_name_frozen.append(n)
+#     dict_params["predict_layer"] -= predict_projectlayer
+#     dict_params["hgn"] += predict_projectlayer
     
     # for n, p in graphqa.named_parameters():
     #     trained = False
@@ -93,34 +127,79 @@ def get_training_params(graphqa, print_stats=False):
 
     num_training_params = 0
     num_fronzen_params = 0
-    num_params_hgn = 0
-    training_params = ['adapter', 'predict_layer', 'hgn']
+    training_params = ['text', 'predict_layer', 'graph', 'fusing']
     dict_params = {p: 0 for p in training_params}
+    
+    import ipdb; ipdb.set_trace()
 
-    predict_projectlayer = 0
-    hgn_adapter = 0
+    def trained_par(n, p, num_training_params, params, params_name):
+        num_training_params += p.numel()
+        params.append(p)
+        params_name.append(n)
+        return True
+
     for n, p in graphqa.named_parameters():
         trained = False
-        for trained_param in training_params:
-            if trained_param in n:
-                num_training_params += p.numel()
-                trained = True
-                params.append(p)
-                params_name.append(n)
-                dict_params[trained_param] += p.numel()
-        # if 'predict_layer' in n:
-        #     print("predict_layer: ",n, p.numel())
-        if 'predict_layer' in n and 'projectionlayer_in' in n:
-            predict_projectlayer += p.numel()
-            print(n, p.numel())
-        if 'hgn' in n and 'adapter' in n:
-            hgn_adapter += p.numel()
-            print("hgn: ", n, p.numel())
+        if 'adapter' in n and not 'graph' in n and not 'text' in n or 'predict_layer' in n and 'projectionlayer' in n:
+            # Add fusing layer and according projection layer to 'fusion'-tag
+            dict_params['fusing'] += p.numel()
+            trained = trained_par(n, p, num_training_params, params, params_name)
+        elif 'adapter' in n and not 'graph' in n:
+            dict_params['text'] +=  p.numel()
+            trained = trained_par(n, p, num_training_params, params, params_name)
+        elif 'graph' in n:
+            dict_params['graph'] += p.numel()
+            trained = trained_par(n, p, num_training_params, params, params_name)
+        elif 'predict_layer' in n:
+            dict_params['predict_layer'] += p.numel()
+            trained = trained_par(n, p, num_training_params, params, params_name)
         if not trained:
             num_fronzen_params += p.numel()
             params_name_frozen.append(n)
-    dict_params["predict_layer"] -= predict_projectlayer
-    dict_params["hgn"] += predict_projectlayer
+
+
+
+
+    
+
+
+
+    # predict_projectlayer = 0
+    # hgn_adapter = 0
+    # adapter = 0
+    # fusing_layer = 0
+    # for n, p in graphqa.named_parameters():
+    #     trained = False
+    #     for trained_param in training_params:
+    #         if trained_param in n:
+    #             num_training_params += p.numel()
+    #             trained = True
+    #             params.append(p)
+    #             params_name.append(n)
+    #             dict_params[trained_param] += p.numel()
+    #     # if 'predict_layer' in n:
+    #     #     print("predict_layer: ",n, p.numel())
+    #     if 'predict_layer' in n and 'projectionlayer_in' in n:
+    #         predict_projectlayer += p.numel()
+    #         # print(n, p.numel())
+    #     # if 'adapter' in n:
+    #     #     print(n, p.numel())
+    #     if 'fusing' in n:
+    #         fusing_layer += p.numel()
+
+    #     if 'adapter' in n and not 'hgn' in n and not 'graph' in n:
+    #         training_params['adapter'] += p.numel()
+
+    #     if 'adapter' in n and 'hgn' in n or 'graph' in n:
+    #         print(n)
+    #     if 'hgn' in n and 'adapter' in n:
+    #         hgn_adapter += p.numel()
+    #         # print("hgn: ", n, p.numel())
+    #     if not trained:
+    #         num_fronzen_params += p.numel()
+    #         params_name_frozen.append(n)
+    # dict_params["predict_layer"] -= predict_projectlayer
+    # dict_params["hgn"] += predict_projectlayer
 
     # ipdb.set_trace()
     # for n, p in graphqa.named_parameters():
@@ -392,13 +471,13 @@ def calc_params(params):
     return result
 
 
-# for i in range(106,300):
-#     with open("Parameter/01_11/multimodal_1.txt", 'a') as f:
-#         params_dict = calc_params([('--adapter_size',str(i)),('--hgn_hidden_size', str(i))])
-#         f.write(str(i)+";")
-#         f.write(str(params_dict)+"\n")
-#         f.close()            
-# import ipdb; ipdb.set_trace()
+for i in range(1,300):
+    with open("Parameter/01_27/multimodal_1.txt", 'a') as f:
+        params_dict = calc_params([('--adapter_size',str(i)),('--hgn_hidden_size', str(i))])
+        f.write(str(i)+";")
+        f.write(str(params_dict)+"\n")
+        f.close()            
+import ipdb; ipdb.set_trace()
 
 
 

@@ -397,9 +397,9 @@ class StructAdapt(nn.Module):
         super().__init__()
         
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.project_layer = nn.Linear(config.hidden_size, config.adapter_size, bias=False)
+        # self.project_layer = nn.Linear(config.hidden_size, config.adapter_size, bias=False)
         hgn_new_config = copy.deepcopy(hgn_config)
-        hgn_new_config.hidden_dim = config.adapter_size
+        hgn_new_config.hidden_dim = hgn_config.hgn_hidden_size
         
         self.hgn = HierarchicalGraphNetwork(hgn_new_config)
 
@@ -470,11 +470,11 @@ class BiModalAdapter(nn.Module):
                                           nn.Dropout(config.hidden_dropout_prob))
         
         self.adapter_fusing_layer = GatedAttention(input_dim=config.intermediate_size,
-                                            memory_dim=config.intermediate_size if hgn_config.q_update else config.intermediate_size*2,
+                                            memory_dim=hgn_config.hgn_hidden_size if hgn_config.q_update else hgn_config.hgn_hidden_size*2,
                                             hid_dim=config.intermediate_size,
                                             dropout=hgn_config.bi_attn_drop,
                                             gate_method=hgn_config.ctx_attn)
-        
+
         self.projection = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
@@ -990,7 +990,7 @@ class HierarchicalGraphNetwork(nn.Module):
         # self.bi_attn_linear = nn.Linear(config.hidden_dim * 4, config.hidden_dim)
         self.query_proj = nn.Linear(config.input_dim, config.hidden_dim*2)
         self.proj = nn.Linear(config.input_dim, config.hidden_dim)
-        self.hidden_dim = config.hidden_dim
+        self.hidden_dim = config.hgn_hidden_size
 
         self.sent_lstm = RNNWrapper(input_dim=config.hidden_dim,
                                      hidden_dim=config.hidden_dim,
@@ -1229,7 +1229,7 @@ class GraphBlock(nn.Module):
     def __init__(self, q_attn, config):
         super(GraphBlock, self).__init__()
         self.config = config
-        self.hidden_dim = config.hidden_dim
+        self.hidden_dim = config.hgn_hidden_size
 
         if self.config.q_update:
             self.gat_linear = nn.Linear(self.hidden_dim*2, self.hidden_dim)

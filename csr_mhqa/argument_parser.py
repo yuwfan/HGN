@@ -193,5 +193,6 @@ def default_train_parser():
 
     # new
     parser.add_argument("--adapter_size", type=int, default=32)
+    parser.add_argument("--hgn_hidden_size", type=int, default=768)
 
     return parser
