@@ -14,11 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """PyTorch BERT model. """
-
+ 
 
 import logging
 import math
 import os
+import ipdb
 
 import torch
 from torch import nn
@@ -210,6 +211,7 @@ class BertEmbeddings(nn.Module):
 class BertSelfAttention(nn.Module):
     def __init__(self, config):
         super(BertSelfAttention, self).__init__()
+
         if config.hidden_size % config.num_attention_heads != 0:
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
@@ -226,7 +228,7 @@ class BertSelfAttention(nn.Module):
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
-
+        
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
         x = x.view(*new_x_shape)
@@ -397,9 +399,9 @@ class StructAdapt(nn.Module):
         super().__init__()
         
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        # self.project_layer = nn.Linear(config.hidden_size, config.adapter_size, bias=False)
+        self.project_layer = nn.Linear(config.hidden_size, config.adapter_size, bias=False)
         hgn_new_config = copy.deepcopy(hgn_config)
-        hgn_new_config.hidden_dim = hgn_config.hidden_dim
+        hgn_new_config.hidden_dim = hgn_config.hgn_hidden_size
         
         self.hgn = HierarchicalGraphNetwork(hgn_new_config)
 
@@ -461,29 +463,26 @@ class BiModalAdapter(nn.Module):
     def __init__(self, config, hgn_config):
         super().__init__()
         self.adapter_graph = StructAdapt(config, hgn_config)
-        
         self.adapter_text = nn.Sequential(nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps),
                                           nn.Linear(config.hidden_size, config.intermediate_size, bias=False),
                                           nn.ReLU(),
                                           nn.Dropout(config.hidden_dropout_prob),
                                           nn.Linear(config.intermediate_size, config.intermediate_size, bias=False),
                                           nn.Dropout(config.hidden_dropout_prob))
-        
+
         self.adapter_fusing_layer = GatedAttention(input_dim=config.intermediate_size,
-                                            memory_dim=hgn_config.hidden_dim if hgn_config.q_update else hgn_config.hidden_dim*2,
-                                            hid_dim=hgn_config.intermediate,
+                                            memory_dim=hgn_config.hgn_hidden_size if hgn_config.q_update else hgn_config.hgn_hidden_size*2,
+                                            hid_dim=config.intermediate_size,
                                             dropout=hgn_config.bi_attn_drop,
                                             gate_method=hgn_config.ctx_attn)
-
-        self.projection = nn.Linear(hgn_config.intermediate, config.hidden_size, bias=False)
+        
+        self.projection = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         
     def forward(self, hidden_states_text, hidden_states_graph, batch):
-
         layer_output_text = self.adapter_text(hidden_states_text) # text adapter
-
-        graph_out_dict = self.adapter_graph(hidden_states_graph, batch) # graph adapter    
         
+        graph_out_dict = self.adapter_graph(hidden_states_graph, batch) # graph adapter    
 
         layer_output = self.adapter_fusing_layer(layer_output_text,
                                                  graph_out_dict['graph_state'],
@@ -493,62 +492,106 @@ class BiModalAdapter(nn.Module):
         layer_output = layer_output + hidden_states_text # residual connection
         return layer_output, graph_out_dict
 
+
 class BertLayer(nn.Module):
-    def __init__(self, config, hgn_config):
+    def __init__(self, config, hgn_config, layer_no):
         super(BertLayer, self).__init__()
+
+
+        # logger.info("SHOW LAYER NO")
+        # logger.info(layer_no)
+
+        self.layer_no = layer_no
+
         self.attention = BertAttention(config)
+        #self.attention_graph = BertAttention(hgn_config)
         self.is_decoder = config.is_decoder
         if self.is_decoder:
             self.crossattention = BertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
-        
+
         config_adapters = copy.deepcopy(config)
         config_adapters.intermediate_size = config.adapter_size
 
         self.adapter_text_bottom = Adapter(config_adapters)
         self.adapter_graph_bottom = Adapter(config_adapters)
+
+
+        self.adapter_graph_top = StructAdapt(config, hgn_config)
+        self.adapter_text_top = nn.Sequential(
+                                        nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps),
+                                        nn.Linear(config.hidden_size, config_adapters.intermediate_size, bias=False),
+                                        nn.ReLU(),
+                                        nn.Dropout(config.hidden_dropout_prob),
+                                        nn.Linear(config_adapters.intermediate_size, config_adapters.intermediate_size, bias=False),
+                                        nn.Dropout(config.hidden_dropout_prob))
+
+        self.gated_attention = GatedAttention(input_dim=config_adapters.intermediate_size,
+                                        memory_dim=hgn_config.hgn_hidden_size if hgn_config.q_update else hgn_config.hgn_hidden_size*2,
+                                        hid_dim=config_adapters.intermediate_size,
+                                        dropout=hgn_config.bi_attn_drop,
+                                        gate_method=hgn_config.ctx_attn)
+        
+        self.projection = nn.Linear(config_adapters.intermediate_size, config.hidden_size, bias=False)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        
         self.adapter_bimodal = BiModalAdapter(config_adapters, hgn_config)
         
     def forward(
         self,
-        hidden_states,
+        text_hidden_states,
+        graph_hidden_states,
         attention_mask=None,
         head_mask=None,
         encoder_hidden_states=None,
         encoder_attention_mask=None,
         batch=None
     ):
-        self_attention_outputs = self.attention(hidden_states, attention_mask, head_mask)
-        attention_output = self_attention_outputs[0]
-        outputs = self_attention_outputs[1:]  # add self attentions if we output attention weights
+        # Textual Outputs
+        self_attention_outputs_text = self.attention(text_hidden_states, attention_mask, head_mask)
+        attention_output_text = self_attention_outputs_text[0]
+        outputs_text = self_attention_outputs_text[1:]  # add self attentions if we output attention weights
 
         if self.is_decoder and encoder_hidden_states is not None:
-            cross_attention_outputs = self.crossattention(
-                attention_output, attention_mask, head_mask, encoder_hidden_states, encoder_attention_mask
+            cross_attention_outputs_text = self.crossattention(
+                attention_output_text, attention_mask, head_mask, encoder_hidden_states, encoder_attention_mask
             )
-            attention_output = cross_attention_outputs[0]
-            outputs = outputs + cross_attention_outputs[1:]  # add cross attentions if we output attention weights
+            attention_output_text = cross_attention_outputs_text[0]
+            outputs_text = outputs_text + cross_attention_outputs_text[1:]  # add cross attentions if we output attention weights
 
-        #### Bottom Adapter
-        attention_output_text = self.adapter_text_bottom(attention_output)
-        attention_output_graph = self.adapter_graph_bottom(attention_output)
-        
+        # Graphical Outputs
+        self_attention_outputs_graph = self.attention(graph_hidden_states, attention_mask, head_mask)
+        attention_output_graph = self_attention_outputs_graph[0]
+        outputs_graph = self_attention_outputs_graph[1:]  # add self attentions if we output attention weights
+
+        if self.is_decoder and encoder_hidden_states is not None:
+            cross_attention_outputs_graph = self.crossattention(
+                attention_output_graph, attention_mask, head_mask, encoder_hidden_states, encoder_attention_mask
+            )
+            attention_output_graph = cross_attention_outputs_graph[0]
+            outputs_graph = outputs_graph + cross_attention_outputs_graph[1:]  # add cross attentions if we output attention weights
+
+        ######## Bottocm Adapter
+        attention_output_adapter_text = self.adapter_text_bottom(attention_output_text)
+        attention_output_adapter_graph = self.adapter_graph_bottom(attention_output_graph)
+
         #### intermediate
         ###### text
-        intermediate_output_text = self.intermediate(attention_output_text)
-        layer_output_text = self.output(intermediate_output_text, attention_output_text)
+        intermediate_output_text = self.intermediate(attention_output_adapter_text)
+        layer_output_text = self.output(intermediate_output_text, attention_output_adapter_text)
         ###### graph
-        intermediate_output_graph = self.intermediate(attention_output_graph)
-        layer_output_graph = self.output(intermediate_output_graph, attention_output_graph)
-        
-        #### Top Adapter
-        layer_output, graph_out_dict = self.adapter_bimodal(layer_output_text, layer_output_graph, batch)
-        
+        intermediate_output_graph = self.intermediate(attention_output_adapter_graph)
+        layer_output_graph = self.output(intermediate_output_graph, attention_output_adapter_graph)
 
-        outputs = (layer_output,) + outputs
+        #### Top Adapter
+        graphs_outoutout, graph_out_dict = self.adapter_bimodal(layer_output_text, layer_output_graph, batch)
+
+
+        outputs_text = (layer_output_text,) + outputs_text
+        outputs_graph = (graphs_outoutout,) + outputs_graph
         
-        return (outputs, graph_out_dict)
+        return (outputs_text, outputs_graph, graph_out_dict)
 
 
 class BertEncoder(nn.Module):
@@ -556,42 +599,56 @@ class BertEncoder(nn.Module):
         super(BertEncoder, self).__init__()
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
-        self.layer = nn.ModuleList([BertLayer(config, hgn_config) for _ in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([BertLayer(config, hgn_config, layer_no) for layer_no in range(config.num_hidden_layers)])
         
     def forward(
         self,
-        hidden_states,
+        hidden_states_text,
         attention_mask=None,
         head_mask=None,
         encoder_hidden_states=None,
         encoder_attention_mask=None,
         batch=None,
     ):
-        all_hidden_states = ()
-        all_attentions = ()
+        all_hidden_states_text = ()
+        all_hiddent_states_graph = ()
+        all_attentions_text = ()
+        all_attentions_graph = ()
+
+        hidden_states_graph = hidden_states_text
+
         for i, layer_module in enumerate(self.layer):
             if self.output_hidden_states:
-                all_hidden_states = all_hidden_states + (hidden_states,)
-
-            layer_outputs, graph_out = layer_module(
-                hidden_states, attention_mask, head_mask[i], encoder_hidden_states, encoder_attention_mask, batch=batch,
+                all_hidden_states_text = all_hidden_states_text + (hidden_states_text,)
+                all_hidden_states_graph = all_hidden_states_graph + (hidden_states_graph,)
+            # Check wether layer() allows graphical input
+            layer_output_text, layer_output_graph, graph_out  = layer_module(
+                hidden_states_text, hidden_states_graph, attention_mask, head_mask[i], encoder_hidden_states, encoder_attention_mask, batch=batch,
             )
-            hidden_states = layer_outputs[0]
+                
+            hidden_states_text = layer_output_text[0]
+            hidden_states_graph = layer_output_graph[0]
 
             if self.output_attentions:
-                all_attentions = all_attentions + (layer_outputs[1],)
+                all_attentions_text = all_attentions_text + (layer_output_text[1],)
+                all_attentions_graph = all_attentions_graph + (layer_output_graph[1],)
 
         # Add last layer
         if self.output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
+            all_hidden_states_text = all_hidden_states_text + (hidden_states_text,)
+            all_hidden_states_graph = all_hidden_states_graph + (hidden_states_graph,)
 
-        outputs = (hidden_states,)
+        outputs_text = (hidden_states_text,)
+        outputs_graph = (hidden_states_graph,)
         if self.output_hidden_states:
-            outputs = outputs + (all_hidden_states,)
+            outputs_text = outputs_text + (all_hidden_states_text,)
+            outputs_graph = outputs_graph + (all_hidden_states_graph,)
         if self.output_attentions:
-            outputs = outputs + (all_attentions,)
+            outputs_text = outputs_text + (all_attentions_text,)
+            outputs_graph = outputs_graph + (all_attentions_graph,)
 
-        return outputs, graph_out  # last-layer hidden state, (all hidden states), (all attentions)
+
+        return outputs_text, outputs_graph, graph_out  # last-layer hidden state, (all hidden states), (all attentions)
 
 
 class BertPooler(nn.Module):
@@ -949,14 +1006,14 @@ class BertModel(BertPreTrainedModel):
                 )  # We can specify head_mask for each layer
             head_mask = head_mask.to(
                 dtype=next(self.parameters()).dtype
-            )  # switch to fload if need + fp16 compatibility
+            )  # switch to fload if need + fp16 compatibilityls
         else:
             head_mask = [None] * self.config.num_hidden_layers
 
         embedding_output = self.embeddings(
             input_ids=input_ids, position_ids=position_ids, token_type_ids=token_type_ids, inputs_embeds=inputs_embeds
-        )
-        encoder_outputs, graph_out = self.encoder(
+        ) 
+        encoder_outputs_text, encoder_outputs_graph, graph_out = self.encoder(
             embedding_output,
             attention_mask=extended_attention_mask,
             head_mask=head_mask,
@@ -964,14 +1021,17 @@ class BertModel(BertPreTrainedModel):
             encoder_attention_mask=encoder_extended_attention_mask,
             batch=batch,
         )
-        sequence_output = encoder_outputs[0]
+        sequence_output_text = encoder_outputs_text[0]
+        sequence_output_graph = encoder_outputs_graph[0]
         #pooled_output = self.pooler(sequence_output)
 
         #outputs = (sequence_output, pooled_output,) + encoder_outputs[
         #    1:
         #]  # add hidden_states and attentions if they are here
-        outputs = (sequence_output, ) + encoder_outputs[1:]
-        return outputs, graph_out  # sequence_output, pooled_output, (hidden_states), (attentions)
+        outputs_text = (sequence_output_text, ) + encoder_outputs_text[1:]
+        outputs_graph = (sequence_output_graph, ) + encoder_outputs_graph[1:]
+        
+        return outputs_text, outputs_graph, graph_out  # sequence_output, pooled_output, (hidden_states), (attentions)
 
 
 class HierarchicalGraphNetwork(nn.Module):
@@ -983,16 +1043,15 @@ class HierarchicalGraphNetwork(nn.Module):
         self.config = config
         self.max_query_length = self.config.max_query_length
 
-        # TODO: Why is this not used?
         # self.bi_attention = BiAttention(input_dim=config.input_dim,
         #                                 memory_dim=config.input_dim,
         #                                 hid_dim=config.hidden_dim,
         #                                 dropout=config.bi_attn_drop)
         # self.bi_attn_linear = nn.Linear(config.hidden_dim * 4, config.hidden_dim)
+        # logger.info(config.hidden_dim)
         self.query_proj = nn.Linear(config.input_dim, config.hidden_dim*2)
         self.proj = nn.Linear(config.input_dim, config.hidden_dim)
-
-        self.hidden_dim = config.hidden_dim
+        self.hidden_dim = config.hgn_hidden_size
 
         self.sent_lstm = RNNWrapper(input_dim=config.hidden_dim,
                                      hidden_dim=config.hidden_dim,
@@ -1005,7 +1064,7 @@ class HierarchicalGraphNetwork(nn.Module):
 
     def forward(self, batch, context_encoding):
         query_mapping = batch['query_mapping']
-        # import ipdb; ipdb.set_trace()
+
         # extract query encoding
         trunc_query_mapping = query_mapping[:, :self.max_query_length].contiguous()
         trunc_query_state = (context_encoding * query_mapping.unsqueeze(2))[:, :self.max_query_length, :].contiguous()
@@ -1366,6 +1425,9 @@ class RNNWrapper(nn.Module):
             if input_lengths is not None:
                 output = rnn.pack_padded_sequence(output, lens, batch_first=True)
 
+            # logger.info("Show layer number")
+            # logger.info(i)
+            # logger.info(output)
             output, _ = self.rnns[i](output)
 
             if input_lengths is not None:

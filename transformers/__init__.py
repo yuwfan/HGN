@@ -169,6 +169,15 @@ if is_torch_available():
     # )
     from .modeling_MM_roberta_v1_base import (
         MultiModal_Roberta_v1_base,
+    )    
+    from .modeling_MM_roberta_v2_layerwise import (
+        MultiModal_Roberta_v2_layerwise,
+    )    
+    from .modeling_MM_roberta_v3_grease import (
+        MultiModal_Roberta_v3_grease,
+    )
+    from .modeling_MM_roberta_v4_unbalanced import (
+        MultiModal_Roberta_v4_unbalanced,
     )
     from .modeling_adapter_vanilla_hgn_v2 import (
         VanillaAdapter_HGN_v2,
