@@ -13,6 +13,8 @@ from csr_mhqa.argument_parser import default_train_parser, complete_default_trai
 from csr_mhqa.data_processing import Example, InputFeatures, DataHelper
 from csr_mhqa.utils import *
 
+from utils.parameters import get_training_params
+
 from models.HGN import *
 from transformers import get_linear_schedule_with_warmup
 
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 ##################
 # IMPORTED METHODS FROM MultimodalRepo for PARAM_Size comparison
 ##################
-def get_training_params(graphqa, print_stats=False):
+def get_training_params_1(graphqa, print_stats=False):
     params = []
     params_name = []
     params_name_frozen = []
