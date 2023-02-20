@@ -18,8 +18,6 @@
 
 import logging
 
-import ipdb
-
 import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss, MSELoss
@@ -193,8 +191,8 @@ class MultiModalStructAdaptFastRoberta_v2(nn.Module):
 
         q_dim = self.hidden_dim if config.q_update else config.input_dim
         self.predict_layer = PredictionLayer(config, q_dim)
-        self.predict_layer_sent_mlp = OutputLayer(config.adapter_size*2, config, num_answer=1)
-        self.predict_layer_entity_mlp = OutputLayer(config.adapter_size*2, config, num_answer=1)
+        self.predict_layer_sent_mlp = OutputLayer(config.hgn_hidden_size*2, config, num_answer=1)
+        self.predict_layer_entity_mlp = OutputLayer(config.hgn_hidden_size*2, config, num_answer=1)
 
 
     def forward(
@@ -268,9 +266,7 @@ class OutputLayer(nn.Module):
         )
 
     def forward(self, hidden_states):
-        
         return self.output(self.projectionlayer_in(hidden_states))
-
 
 class PredictionLayer(nn.Module):
     """

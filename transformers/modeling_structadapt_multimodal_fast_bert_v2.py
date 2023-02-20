@@ -210,6 +210,7 @@ class BertEmbeddings(nn.Module):
 class BertSelfAttention(nn.Module):
     def __init__(self, config):
         super(BertSelfAttention, self).__init__()
+
         if config.hidden_size % config.num_attention_heads != 0:
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
@@ -397,10 +398,12 @@ class StructAdapt(nn.Module):
         super().__init__()
         
         self.layer_norm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        # Its not being used
         # self.project_layer = nn.Linear(config.hidden_size, config.adapter_size, bias=False)
         hgn_new_config = copy.deepcopy(hgn_config)
-        hgn_new_config.hidden_dim = hgn_config.hidden_dim
-        
+        # hgn_new_config.hidden_dim = hgn_config.hidden_dim
+        # hgn_new_config.hidden_dim = hgn_config.hgn_hidden_size
+
         self.hgn = HierarchicalGraphNetwork(hgn_new_config)
 
 
@@ -454,14 +457,12 @@ class GatedAttention(nn.Module):
         else:
             raise ValueError("Not support gate method: {}".format(self.gate_method))
 
-
         return output
     
 class BiModalAdapter(nn.Module):
     def __init__(self, config, hgn_config):
         super().__init__()
         self.adapter_graph = StructAdapt(config, hgn_config)
-        
         self.adapter_text = nn.Sequential(nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps),
                                           nn.Linear(config.hidden_size, config.intermediate_size, bias=False),
                                           nn.ReLU(),
@@ -469,21 +470,26 @@ class BiModalAdapter(nn.Module):
                                           nn.Linear(config.intermediate_size, config.intermediate_size, bias=False),
                                           nn.Dropout(config.hidden_dropout_prob))
         
+        # self.adapter_fusing_layer = GatedAttention(input_dim=config.intermediate_size,
+        #                                     memory_dim=hgn_config.hidden_dim if hgn_config.q_update else hgn_config.hidden_dim*2,
+        #                                     hid_dim=hgn_config.intermediate,
+        #                                     dropout=hgn_config.bi_attn_drop,
+        #                                     gate_method=hgn_config.ctx_attn)
+
+        # self.projection = nn.Linear(hgn_config.intermediate, config.hidden_size, bias=False)
         self.adapter_fusing_layer = GatedAttention(input_dim=config.intermediate_size,
-                                            memory_dim=hgn_config.hidden_dim if hgn_config.q_update else hgn_config.hidden_dim*2,
-                                            hid_dim=hgn_config.intermediate,
-                                            dropout=hgn_config.bi_attn_drop,
-                                            gate_method=hgn_config.ctx_attn)
-
-        self.projection = nn.Linear(hgn_config.intermediate, config.hidden_size, bias=False)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+                                    memory_dim=config.intermediate_size if hgn_config.q_update else config.intermediate_size*2,
+                                    hid_dim=config.intermediate_size,
+                                    dropout=hgn_config.bi_attn_drop,
+                                    gate_method=hgn_config.ctx_attn)
         
-    def forward(self, hidden_states_text, hidden_states_graph, batch):
+        self.projection = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
+    def forward(self, hidden_states_text, hidden_states_graph, batch):
         layer_output_text = self.adapter_text(hidden_states_text) # text adapter
 
         graph_out_dict = self.adapter_graph(hidden_states_graph, batch) # graph adapter    
-        
 
         layer_output = self.adapter_fusing_layer(layer_output_text,
                                                  graph_out_dict['graph_state'],
@@ -502,13 +508,14 @@ class BertLayer(nn.Module):
             self.crossattention = BertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
-        
+
         config_adapters = copy.deepcopy(config)
         config_adapters.intermediate_size = config.adapter_size
-
+        config_adapters.intermediate_size = hgn_config.hidden_dim
         self.adapter_text_bottom = Adapter(config_adapters)
+        
         self.adapter_graph_bottom = Adapter(config_adapters)
-        self.adapter_bimodal = BiModalAdapter(config_adapters, hgn_config)
+        self.adapter_fusing_bimodal = BiModalAdapter(config_adapters, hgn_config)
         
     def forward(
         self,
@@ -543,7 +550,7 @@ class BertLayer(nn.Module):
         layer_output_graph = self.output(intermediate_output_graph, attention_output_graph)
         
         #### Top Adapter
-        layer_output, graph_out_dict = self.adapter_bimodal(layer_output_text, layer_output_graph, batch)
+        layer_output, graph_out_dict = self.adapter_fusing_bimodal(layer_output_text, layer_output_graph, batch)
         
 
         outputs = (layer_output,) + outputs
@@ -590,7 +597,6 @@ class BertEncoder(nn.Module):
             outputs = outputs + (all_hidden_states,)
         if self.output_attentions:
             outputs = outputs + (all_attentions,)
-
         return outputs, graph_out  # last-layer hidden state, (all hidden states), (all attentions)
 
 
@@ -991,7 +997,6 @@ class HierarchicalGraphNetwork(nn.Module):
         # self.bi_attn_linear = nn.Linear(config.hidden_dim * 4, config.hidden_dim)
         self.query_proj = nn.Linear(config.input_dim, config.hidden_dim*2)
         self.proj = nn.Linear(config.input_dim, config.hidden_dim)
-
         self.hidden_dim = config.hidden_dim
 
         self.sent_lstm = RNNWrapper(input_dim=config.hidden_dim,
@@ -1005,7 +1010,7 @@ class HierarchicalGraphNetwork(nn.Module):
 
     def forward(self, batch, context_encoding):
         query_mapping = batch['query_mapping']
-        # import ipdb; ipdb.set_trace()
+
         # extract query encoding
         trunc_query_mapping = query_mapping[:, :self.max_query_length].contiguous()
         trunc_query_state = (context_encoding * query_mapping.unsqueeze(2))[:, :self.max_query_length, :].contiguous()
