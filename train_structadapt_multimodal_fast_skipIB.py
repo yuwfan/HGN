@@ -41,7 +41,7 @@ def get_t_p(graphqa, print_stats=False):
         params.append(p)
         params_name.append(n)
         return True
-
+    
     for n, p in graphqa.named_parameters():
         trained = False
         if 'adapter' in n and not 'graph' in n and not 'text' in n or 'predict_layer' in n and 'projectionlayer' in n:
@@ -369,7 +369,7 @@ def new_model(adapt = '86', hid='300'):
     model = MultiModalStructAdaptFastRoberta_v2_skipIB(a13)
     optimizer = get_optimizer(model, a13, learning_rate, remove_pooler=False)
 
-# new_model(adapt = '330', hid='49')
+# new_model(adapt = '128', hid='300')
 
 # import ipdb; ipdb.set_trace()
 

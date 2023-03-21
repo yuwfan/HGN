@@ -501,8 +501,7 @@ class BertLayer(nn.Module):
     def __init__(self, config, hgn_config, layer_no):
         super(BertLayer, self).__init__()
         self.layer_no = layer_no
-        # self.t_layer = range(11)      # LATE FUSION (Last layer)
-        self.t_layer = range(1,12)      # EARLY FUSION  (first layer)      
+        self.t_layer = range(11)
 
         self.attention = BertAttention(config)
         self.is_decoder = config.is_decoder

@@ -210,6 +210,7 @@ class BertEmbeddings(nn.Module):
 class BertSelfAttention(nn.Module):
     def __init__(self, config):
         super(BertSelfAttention, self).__init__()
+
         if config.hidden_size % config.num_attention_heads != 0:
             raise ValueError(
                 "The hidden size (%d) is not a multiple of the number of attention "
@@ -481,9 +482,10 @@ class BiModalAdapter(nn.Module):
                                     hid_dim=config.intermediate_size,
                                     dropout=hgn_config.bi_attn_drop,
                                     gate_method=hgn_config.ctx_attn)
-        
+        # import ipdb; ipdb.set_trace()
         self.projection = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
     def forward(self, hidden_states_text, hidden_states_graph, batch):
         layer_output_text = self.adapter_text(hidden_states_text) # text adapter
 
@@ -498,33 +500,23 @@ class BiModalAdapter(nn.Module):
         return layer_output, graph_out_dict
 
 class BertLayer(nn.Module):
-    def __init__(self, config, hgn_config, layer_no):
+    def __init__(self, config, hgn_config):
         super(BertLayer, self).__init__()
-        self.layer_no = layer_no
-        # self.t_layer = range(11)      # LATE FUSION (Last layer)
-        self.t_layer = range(1,12)      # EARLY FUSION  (first layer)      
-
         self.attention = BertAttention(config)
         self.is_decoder = config.is_decoder
         if self.is_decoder:
             self.crossattention = BertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
-        
+
         config_adapters = copy.deepcopy(config)
         config_adapters.intermediate_size = config.adapter_size
-
+        config_adapters.intermediate_size = hgn_config.hidden_dim
         self.adapter_text_bottom = Adapter(config_adapters)
-
-
-        if not self.layer_no in self.t_layer:
-            config_adapters.intermediate_size = hgn_config.hidden_dim
-            self.adapter_graph_bottom = Adapter(config_adapters)
-            self.adapter_bimodal = BiModalAdapter(config_adapters, hgn_config)
-        else:
-            # self.adapter_graph_top = StructAdapt(config, hgn_config)
-            self.adapter_text_top = Adapter(config_adapters)
-
+        
+        self.adapter_graph_bottom = Adapter(config_adapters)
+        self.adapter_fusing_bimodal = BiModalAdapter(config_adapters, hgn_config)
+        
     def forward(
         self,
         hidden_states,
@@ -547,43 +539,23 @@ class BertLayer(nn.Module):
 
         #### Bottom Adapter
         attention_output_text = self.adapter_text_bottom(attention_output)
-        if not self.layer_no in self.t_layer:
-            attention_output_graph = self.adapter_graph_bottom(attention_output)
-
+        attention_output_graph = self.adapter_graph_bottom(attention_output)
+        
         #### intermediate
         ###### text
         intermediate_output_text = self.intermediate(attention_output_text)
         layer_output_text = self.output(intermediate_output_text, attention_output_text)
-
-        if not self.layer_no in self.t_layer:
-            ###### graph
-            intermediate_output_graph = self.intermediate(attention_output_graph)
-            layer_output_graph = self.output(intermediate_output_graph, attention_output_graph)
-
+        ###### graph
+        intermediate_output_graph = self.intermediate(attention_output_graph)
+        layer_output_graph = self.output(intermediate_output_graph, attention_output_graph)
+        
         #### Top Adapter
-        if not self.layer_no in self.t_layer:
-            layer_output, graph_out_dict = self.adapter_bimodal(layer_output_text, layer_output_graph, batch)
-        else:
-            layer_output = self.adapter_text_top(layer_output_text)
-            # graph_out_dict = self.adapter_graph_top(layer_output_graph, batch)
-            graph_out_dict = None
+        layer_output, graph_out_dict = self.adapter_fusing_bimodal(layer_output_text, layer_output_graph, batch)
+        
 
         outputs = (layer_output,) + outputs
         
         return (outputs, graph_out_dict)
-
-        # #### Bottom Adapter
-        # attention_output_text = self.adapter_text_bottom(attention_output)
-        
-        # intermediate_output_text = self.intermediate(attention_output_text)
-        # layer_output_text = self.output(intermediate_output_text, attention_output_text)
-        
-        # #### Top Adapter
-        # layer_output = self.adapter_text_top(layer_output_text)
-
-
-        # outputs = (layer_output,) + outputs
-        # return outputs
 
 
 class BertEncoder(nn.Module):
@@ -591,7 +563,7 @@ class BertEncoder(nn.Module):
         super(BertEncoder, self).__init__()
         self.output_attentions = config.output_attentions
         self.output_hidden_states = config.output_hidden_states
-        self.layer = nn.ModuleList([BertLayer(config, hgn_config, layer_no) for layer_no in range(config.num_hidden_layers)])
+        self.layer = nn.ModuleList([BertLayer(config, hgn_config) for _ in range(config.num_hidden_layers)])
         
     def forward(
         self,
@@ -604,7 +576,6 @@ class BertEncoder(nn.Module):
     ):
         all_hidden_states = ()
         all_attentions = ()
-        graph_temporary = None
         for i, layer_module in enumerate(self.layer):
             if self.output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
@@ -616,9 +587,6 @@ class BertEncoder(nn.Module):
 
             if self.output_attentions:
                 all_attentions = all_attentions + (layer_outputs[1],)
-            
-            if graph_out:
-                graph_temporary = graph_out
 
         # Add last layer
         if self.output_hidden_states:
@@ -629,7 +597,7 @@ class BertEncoder(nn.Module):
             outputs = outputs + (all_hidden_states,)
         if self.output_attentions:
             outputs = outputs + (all_attentions,)
-        return outputs, graph_temporary  # last-layer hidden state, (all hidden states), (all attentions)
+        return outputs, graph_out  # last-layer hidden state, (all hidden states), (all attentions)
 
 
 class BertPooler(nn.Module):
