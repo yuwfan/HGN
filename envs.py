@@ -9,7 +9,7 @@ PROJECT_FOLDER = os.path.dirname(__file__)
 sys.path.append(join(PROJECT_FOLDER, 'transformers'))
 
 # Define the dataset folder and model folder based on environment
-HOME_DATA_FOLDER = '/ssd/HGN/data'
+HOME_DATA_FOLDER = '/home/zhanwen/hgn/data'
 DATASET_FOLDER = join(HOME_DATA_FOLDER, 'dataset')
 MODEL_FOLDER = join(HOME_DATA_FOLDER, 'models')
 KNOWLEDGE_FOLDER = join(HOME_DATA_FOLDER, 'knowledge')
