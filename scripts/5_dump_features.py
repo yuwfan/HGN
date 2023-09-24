@@ -639,7 +639,7 @@ if __name__ == '__main__':
     tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path, do_lower_case=args.do_lower_case)
 
     examples = read_hotpot_examples(para_file=args.para_path,
-                                    full_file=args.raw_data,
+                                    raw_file=args.raw_data,
                                     ner_file=args.ner_path,
                                     doc_link_file=args.doc_link_ner)
     cached_examples_file = os.path.join(args.output_dir,
