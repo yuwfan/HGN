@@ -12,7 +12,8 @@ docker pull studyfang/hgn:latest
 To run docker without sudo permission, please refer this documentation [Manage Docker as a non-root user](https://docs.docker.com/install/linux/linux-postinstall/).
 Then, you could start docker, e.g.
 ```bash
-docker run --gpus all -it -v /datadrive_c/yuwfan:/ssd -it studyfang/hgn:latest bash
+docker run --shm-size=512m --gpus all -p 52022:22 --name zhanwen_hgn -v /home/zhanwen:/home/zhanwen -it studyfang/hgn:latest bash
+conda install pytorch==1.7.1 torchvision==0.8.2 torchaudio==0.7.2 cudatoolkit=11.0 -c pytorch
 ```
 
 ## Quick Start
