@@ -17,13 +17,12 @@ from torch import (
     tensor as torch_tensor,
     long as torch_long,
     float as torch_float,
-    float16 as torch_float16,
     load as torch_load,
-    autocast as torch_autocast,
     device as torch_device,
 )
 from torch.cuda import is_available
 from torch.utils.data import DataLoader, SequentialSampler, TensorDataset
+from apex.amp import initialize
 # This line must be above local package reference
 from transformers import (BertConfig, BertForSequenceClassification, BertTokenizer,
                           RobertaConfig, RobertaTokenizer, RobertaForSequenceClassification)
@@ -222,8 +221,10 @@ if __name__ == "__main__":
                                         config=config,
                                         state_dict=model_state_dict)
     model.cuda()
-    with torch_autocast(device_type=args.device.__str__(), dtype=torch_float16, enabled=args.fp16):
-        score = evaluate(args, model, tokenizer, prefix="")
+    if args.fp16:
+        model = initialize(model, opt_level=args.fp16_opt_level)
+
+    score = evaluate(args, model, tokenizer, prefix="")
 
     # load source data
     source_data = json_load(open(args.raw_data, 'r'))
