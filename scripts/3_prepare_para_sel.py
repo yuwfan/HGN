@@ -1,12 +1,11 @@
-import os
-import json
-import pandas
-import sys
+from sys import argv
+from json import load as json_load
+from pandas import DataFrame
 
-input_file = sys.argv[1]
-output_file = sys.argv[2]
+input_file = argv[1]
+output_file = argv[2]
 
-input_data = json.load(open(input_file, 'r'))
+input_data = json_load(open(input_file, 'r'))
 labels, titles, contexts, questions = [], [], [], []
 
 for data in input_data:
@@ -22,5 +21,5 @@ for data in input_data:
         contexts.append(context)
         questions.append(question)
 
-df = pandas.DataFrame({'title': titles, 'context': contexts, 'label': labels, 'question':questions})
+df = DataFrame({'title': titles, 'context': contexts, 'label': labels, 'question':questions})
 df.to_csv(output_file)

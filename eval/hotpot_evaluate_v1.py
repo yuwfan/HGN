@@ -1,20 +1,19 @@
-import sys
-import ujson as json
-import re
-import string
+from sys import argv
+from re import sub as re_sub
+from string import punctuation
 from collections import Counter
-import pickle
+from ujson import load as ujson_load
 
 def normalize_answer(s):
 
     def remove_articles(text):
-        return re.sub(r'\b(a|an|the)\b', ' ', text)
+        return re_sub(r'\b(a|an|the)\b', ' ', text)
 
     def white_space_fix(text):
         return ' '.join(text.split())
 
     def remove_punc(text):
-        exclude = set(string.punctuation)
+        exclude = set(punctuation)
         return ''.join(ch for ch in text if ch not in exclude)
 
     def lower(text):
@@ -82,9 +81,9 @@ def update_sp(metrics, prediction, gold):
 
 def eval(prediction_file, gold_file):
     with open(prediction_file) as f:
-        prediction = json.load(f)
+        prediction = ujson_load(f)
     with open(gold_file) as f:
-        gold = json.load(f)
+        gold = ujson_load(f)
 
     metrics = {'em': 0, 'f1': 0, 'prec': 0, 'recall': 0,
         'sp_em': 0, 'sp_f1': 0, 'sp_prec': 0, 'sp_recall': 0,
@@ -129,5 +128,5 @@ def eval(prediction_file, gold_file):
     return metrics
 
 if __name__ == '__main__':
-    print(eval(sys.argv[1], sys.argv[2]))
+    print(eval(argv[1], argv[2]))
 

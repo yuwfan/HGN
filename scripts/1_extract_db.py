@@ -1,20 +1,18 @@
-import json
-import sqlite3
-import sys
-import unicodedata
-import re
-import pickle
-
+from json import load as json_load, dump as json_dump
+from sqlite3 import connect as sqlite3_connect
+from sys import argv
+from unicodedata import normalize as unicodedata_normalize
+from re import compile as re_compile
 from urllib.parse import unquote
-from tqdm import tqdm
+from pickle import loads as pickle_loads
 
 #input:
-input_file = sys.argv[1]
-db_path = sys.argv[2]
+input_file = argv[1]
+db_path = argv[2]
 #output
-output_file = sys.argv[3]
+output_file = argv[3]
 
-EDGE_XY = re.compile(r'<a href="(.*?)">(.*?)</a>')
+EDGE_XY = re_compile(r'<a href="(.*?)">(.*?)</a>')
 def get_edges(sentence):
     #ret = EDGE_XY.findall(sentence)
     ret = EDGE_XY.findall(sentence + '</a>')
@@ -22,7 +20,7 @@ def get_edges(sentence):
 
 def normalize(text):
     """Resolve different type of unicode encodings."""
-    return unicodedata.normalize('NFD', text)
+    return unicodedata_normalize('NFD', text)
 
 
 class DocDB(object):
@@ -33,7 +31,7 @@ class DocDB(object):
 
     def __init__(self, db_path):
         self.path = db_path
-        self.connection = sqlite3.connect(self.path, check_same_thread=False)
+        self.connection = sqlite3_connect(self.path, check_same_thread=False)
 
     def __enter__(self):
         return self
@@ -100,7 +98,7 @@ for doc_id in doc_ids:
         title_to_id[title] = doc_id
 
 # 2. extract hyperlink and NER
-input_data = json.load(open(input_file, 'r'))
+input_data = json_load(open(input_file, 'r'))
 output_data = {}
 for data in input_data:
     context = dict(data['context'])
@@ -109,8 +107,8 @@ for data in input_data:
             print("{} not exist in DB".format(title))
         else:
             doc_id = title_to_id[title]
-            text_with_links = pickle.loads(doc_db.get_doc_text_with_links(doc_id))
-            text_ner = pickle.loads(doc_db.get_doc_ner(doc_id))
+            text_with_links = pickle_loads(doc_db.get_doc_text_with_links(doc_id))
+            text_ner = pickle_loads(doc_db.get_doc_ner(doc_id))
 
             hyperlink_titles, hyperlink_spans = [], []
             hyperlink_paras = []
@@ -123,7 +121,7 @@ for data in input_data:
                         if link_title in title_to_id:
                             _lt.append(link_title)
                             _ls.append(mention_entity)
-                            doc_text = pickle.loads(doc_db.get_doc_text(title_to_id[link_title]))
+                            doc_text = pickle_loads(doc_db.get_doc_text(title_to_id[link_title]))
                             _lp.append(doc_text)
 
                 hyperlink_titles.append(_lt)
@@ -135,4 +133,4 @@ for data in input_data:
                                   'hyperlink_spans': hyperlink_spans,
                                   'text_ner': text_ner}
 
-json.dump(output_data, open(output_file, 'w'))
+json_dump(output_data, open(output_file, 'w'))

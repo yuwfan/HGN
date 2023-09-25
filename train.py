@@ -1,23 +1,26 @@
-import argparse
-import numpy as np
-import logging
-import sys
-
-from os.path import join
+from logging import basicConfig, getLogger, INFO
+from sys import argv
+from os.path import join as os_path_join, exists as os_path_exists
 from tqdm import tqdm, trange
 from tensorboardX import SummaryWriter
-
-from csr_mhqa.argument_parser import default_train_parser, complete_default_train_parser, json_to_argv
-from csr_mhqa.data_processing import Example, InputFeatures, DataHelper
-from csr_mhqa.utils import *
-
-from models.HGN import *
+from torch import (
+    load as torch_load,
+    save as torch_save,
+    autocast as torch_autocast,
+    float16 as torch_float16,
+)
+from torch.nn.parallel import DistributedDataParallel
+from torch.distributed import get_rank
+from torch.nn.utils import clip_grad_norm_
+from torch.cuda.amp import GradScaler
 from transformers import get_linear_schedule_with_warmup
+from csr_mhqa.argument_parser import default_train_parser, complete_default_train_parser, json_to_argv
+from csr_mhqa.data_processing import DataHelper
+from csr_mhqa.utils import load_encoder_model, get_optimizer, compute_loss, eval_model, MODEL_CLASSES
+from models.HGN import HierarchicalGraphNetwork
 
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                    datefmt='%m/%d/%Y %H:%M:%S',
-                    level=logging.INFO)
-logger = logging.getLogger(__name__)
+basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s', datefmt='%m/%d/%Y %H:%M:%S', level=INFO)
+logger = getLogger(__name__)
 
 #########################################################################
 # Initialize arguments
@@ -25,11 +28,11 @@ logger = logging.getLogger(__name__)
 parser = default_train_parser()
 
 logger.info("IN CMD MODE")
-args_config_provided = parser.parse_args(sys.argv[1:])
+args_config_provided = parser.parse_args(argv[1:])
 if args_config_provided.config_file is not None:
-    argv = json_to_argv(args_config_provided.config_file) + sys.argv[1:]
+    argv = json_to_argv(args_config_provided.config_file) + argv[1:]
 else:
-    argv = sys.argv[1:]
+    argv = argv[1:]
 args = parser.parse_args(argv)
 args = complete_default_train_parser(args)
 
@@ -54,11 +57,11 @@ dev_dataloader = helper.dev_loader
 #########################################################################
 # Initialize Model
 ##########################################################################
-cached_config_file = join(args.exp_name, 'cached_config.bin')
-if os.path.exists(cached_config_file):
-    cached_config = torch.load(cached_config_file)
-    encoder_path = join(args.exp_name, cached_config['encoder'])
-    model_path = join(args.exp_name, cached_config['model'])
+cached_config_file = os_path_join(args.exp_name, 'cached_config.bin')
+if os_path_exists(cached_config_file):
+    cached_config = torch_load(cached_config_file)
+    encoder_path = os_path_join(args.exp_name, cached_config['encoder'])
+    model_path = os_path_join(args.exp_name, cached_config['model'])
     learning_rate = cached_config['lr']
     start_epoch = cached_config['epoch']
     best_joint_f1 = cached_config['best_joint_f1']
@@ -76,9 +79,9 @@ encoder, _ = load_encoder_model(args.encoder_name_or_path, args.model_type)
 model = HierarchicalGraphNetwork(config=args)
 
 if encoder_path is not None:
-    encoder.load_state_dict(torch.load(encoder_path))
+    encoder.load_state_dict(torch_load(encoder_path))
 if model_path is not None:
-    model.load_state_dict(torch.load(model_path))
+    model.load_state_dict(torch_load(model_path))
 
 encoder.to(args.device)
 model.to(args.device)
@@ -91,8 +94,8 @@ tokenizer = tokenizer_class.from_pretrained(args.encoder_name_or_path,
 # Evalaute if resumed from other checkpoint
 ##########################################################################
 if encoder_path is not None and model_path is not None:
-    output_pred_file = os.path.join(args.exp_name, 'prev_checkpoint.pred.json')
-    output_eval_file = os.path.join(args.exp_name, 'prev_checkpoint.eval.txt')
+    output_pred_file = os_path_join(args.exp_name, 'prev_checkpoint.pred.json')
+    output_eval_file = os_path_join(args.exp_name, 'prev_checkpoint.eval.txt')
     prev_metrics, prev_threshold = eval_model(args, encoder, model,
                                               dev_dataloader, dev_example_dict, dev_feature_dict,
                                               output_pred_file, output_eval_file, args.dev_gold_file)
@@ -111,17 +114,12 @@ else:
 
 optimizer = get_optimizer(encoder, model, args, learning_rate, remove_pooler=False)
 use_amp = args.fp16
-scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+scaler = GradScaler(enabled=use_amp)
 
 # Distributed training (should be after apex fp16 initialization)
 if args.local_rank != -1:
-    encoder = torch.nn.parallel.DistributedDataParallel(encoder, device_ids=[args.local_rank],
-                                                        output_device=args.local_rank,
-                                                        find_unused_parameters=True)
-
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank],
-                                                      output_device=args.local_rank,
-                                                      find_unused_parameters=True)
+    encoder = DistributedDataParallel(encoder, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
+    model = DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank, find_unused_parameters=True)
 
 scheduler = get_linear_schedule_with_warmup(optimizer,
                                             num_warmup_steps=args.warmup_steps,
@@ -148,7 +146,7 @@ for epoch in train_iterator:
     for step, batch in enumerate(epoch_iterator):
         encoder.train()
         model.train()
-        with torch.autocast(device_type=args.device, dtype=torch.float16, enabled=use_amp):
+        with torch_autocast(device_type=args.device.__str__(), dtype=torch_float16, enabled=use_amp):
             inputs = {'input_ids':      batch['context_idxs'],
                     'attention_mask': batch['context_mask'],
                     'token_type_ids': batch['segment_idxs'] if args.model_type in ['bert', 'xlnet'] else None}  # XLM don't use segment_ids
@@ -168,7 +166,7 @@ for epoch in train_iterator:
                     loss = loss / args.gradient_accumulation_steps
             scaler.scale(loss_list[0]).backward()
             scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(optimizer.param_groups, max_norm=args.max_grad_norm)
+            clip_grad_norm_(optimizer.param_groups, max_norm=args.max_grad_norm)
             for idx in range(len(loss_name)):
                 if not isinstance(loss_list[idx], int):
                     tr_loss[idx] += loss_list[idx].data.item()
@@ -197,27 +195,27 @@ for epoch in train_iterator:
         if args.max_steps > 0 and global_step > args.max_steps:
             epoch_iterator.close()
             break
-    if args.local_rank == -1 or torch.distributed.get_rank() == 0:
-        output_pred_file = os.path.join(args.exp_name, f'pred.epoch_{epoch+1}.json')
-        output_eval_file = os.path.join(args.exp_name, f'eval.epoch_{epoch+1}.txt')
+    if args.local_rank == -1 or get_rank() == 0:
+        output_pred_file = os_path_join(args.exp_name, f'pred.epoch_{epoch+1}.json')
+        output_eval_file = os_path_join(args.exp_name, f'eval.epoch_{epoch+1}.txt')
         metrics, threshold = eval_model(args, encoder, model,
                                         dev_dataloader, dev_example_dict, dev_feature_dict,
                                         output_pred_file, output_eval_file, args.dev_gold_file)
 
         if metrics['joint_f1'] >= best_joint_f1:
             best_joint_f1 = metrics['joint_f1']
-            torch.save({'epoch': epoch+1,
+            torch_save({'epoch': epoch+1,
                         'lr': scheduler.get_lr()[0],
                         'encoder': 'encoder.pkl',
                         'model': 'model.pkl',
                         'best_joint_f1': best_joint_f1,
                         'threshold': threshold},
-                       join(args.exp_name, f'cached_config.bin')
+                       os_path_join(args.exp_name, f'cached_config.bin')
             )
-        torch.save({k: v.cpu() for k, v in encoder.state_dict().items()},
-                    join(args.exp_name, f'encoder_{epoch+1}.pkl'))
-        torch.save({k: v.cpu() for k, v in model.state_dict().items()},
-                    join(args.exp_name, f'model_{epoch+1}.pkl'))
+        torch_save({k: v.cpu() for k, v in encoder.state_dict().items()},
+                    os_path_join(args.exp_name, f'encoder_{epoch+1}.pkl'))
+        torch_save({k: v.cpu() for k, v in model.state_dict().items()},
+                    os_path_join(args.exp_name, f'model_{epoch+1}.pkl'))
 
         for key, val in metrics.items():
             tb_writer.add_scalar(key, val, epoch)

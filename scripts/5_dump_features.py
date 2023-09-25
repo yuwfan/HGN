@@ -1,31 +1,23 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import argparse
-import json
-import gzip
-import pickle
-import copy
-import re
-import os
-import numpy as np
-import itertools
-import spacy
-
-from spacy.tokenizer import Tokenizer
-from collections import Counter
+from os.path import join as os_path_join
+from argparse import ArgumentParser
+from json import load as json_load
+from gzip import open as gzip_open
+from re import compile as re_compile, sub as re_sub
+from itertools import chain
+from pickle import dump as pickle_dump
 from tqdm import tqdm
-
+from numpy import float32 as np_float32, zeros as np_zeros
+from spacy import load as spacy_load
+from spacy.tokenizer import Tokenizer
 from model_envs import MODEL_CLASSES
-from envs import DATASET_FOLDER
 from csr_mhqa.data_processing import Example, InputFeatures, get_cached_filename
 from eval.hotpot_evaluate_v1 import normalize_answer
+from_iterable = chain.from_iterable
 
-infix_re = re.compile(r'''[-—–~]''')
+infix_re = re_compile(r'''[-—–~]''')
 def custom_tokenizer(nlp):
     return Tokenizer(nlp.vocab, infix_finditer=infix_re.finditer)
-nlp = spacy.load("en_core_web_lg", disable=['tagger', 'parser'])
+nlp = spacy_load("en_core_web_lg", disable=['tagger', 'parser'])
 nlp.tokenizer.infix_finditer = infix_re.finditer
 #nlp.tokenizer = custom_tokenizer(nlp)
 
@@ -35,16 +27,16 @@ def read_hotpot_examples(para_file,
                          doc_link_file):
 
     with open(para_file, 'r', encoding='utf-8') as reader:
-        para_data = json.load(reader)
+        para_data = json_load(reader)
 
     with open(raw_file, 'r', encoding='utf-8') as reader:
-        raw_data = json.load(reader)
+        raw_data = json_load(reader)
 
     with open(ner_file, 'r', encoding='utf-8') as reader:
-        ner_data = json.load(reader)
+        ner_data = json_load(reader)
 
     with open(doc_link_file, 'r', encoding='utf-8') as reader:
-        doc_link_data = json.load(reader)
+        doc_link_data = json_load(reader)
 
     def split_sent(sent, offset=0):
         nlp_doc = nlp(sent)
@@ -115,8 +107,8 @@ def read_hotpot_examples(para_file,
         sel_paras = para_data[key]
         ner_context = dict(ner_data[key]['context'])
 
-        for title in itertools.chain.from_iterable(sel_paras):
-            stripped_title= re.sub(r' \(.*?\)$', '', title)
+        for title in from_iterable(sel_paras):
+            stripped_title= re_sub(r' \(.*?\)$', '', title)
             stripped_title_norm = normalize_answer(stripped_title)
 
             sents = context[title]
@@ -565,7 +557,7 @@ def _improve_answer_span(doc_tokens, input_start, input_end, tokenizer,
 
 def create_graphs(case, max_para_num, max_sent_num, max_entity_num):
     max_node_cnt = max_para_num + max_sent_num + max_entity_num + 1 # ques + para + sent
-    adj = np.zeros((max_node_cnt, max_node_cnt), dtype=np.float32)
+    adj = np_zeros((max_node_cnt, max_node_cnt), dtype=np_float32)
 
     def get_id(key, idx):
         # ques: 0
@@ -609,7 +601,7 @@ def build_graph(args, examples, features, entity_num):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    parser = ArgumentParser()
 
     # Required parameters
     parser.add_argument("--para_path", type=str, required=True)
@@ -645,10 +637,10 @@ if __name__ == '__main__':
                                     raw_file=args.raw_data,
                                     ner_file=args.ner_path,
                                     doc_link_file=args.doc_link_ner)
-    cached_examples_file = os.path.join(args.output_dir,
+    cached_examples_file = os_path_join(args.output_dir,
                                         get_cached_filename('examples', args))
-    with gzip.open(cached_examples_file, 'wb') as fout:
-        pickle.dump(examples, fout)
+    with gzip_open(cached_examples_file, 'wb') as fout:
+        pickle_dump(examples, fout)
 
     features = convert_examples_to_features(examples, tokenizer,
                                             max_seq_length=args.max_seq_length,
@@ -658,16 +650,16 @@ if __name__ == '__main__':
                                             sep_token=tokenizer.sep_token,
                                             is_roberta=bool(args.model_type in ['roberta']),
                                             filter_no_ans=args.filter_no_ans)
-    cached_features_file = os.path.join(args.output_dir,
+    cached_features_file = os_path_join(args.output_dir,
                                         get_cached_filename('features',  args))
 
-    with gzip.open(cached_features_file, 'wb') as fout:
-        pickle.dump(features, fout)
+    with gzip_open(cached_features_file, 'wb') as fout:
+        pickle_dump(features, fout)
 
     # build graphs
-    cached_graph_file = os.path.join(args.output_dir,
+    cached_graph_file = os_path_join(args.output_dir,
                                      get_cached_filename('graphs', args))
 
     graphs = build_graph(args, examples, features, args.max_entity_num)
-    with gzip.open(cached_graph_file, 'wb') as fout:
-        pickle.dump(graphs, fout)
+    with gzip_open(cached_graph_file, 'wb') as fout:
+        pickle_dump(graphs, fout)
