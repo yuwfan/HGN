@@ -58,7 +58,7 @@ def extract_question_ner(full_data):
         idx_to_ques[idx] = guid
         idx += 1
 
-    for idx, doc in enumerate(nlp.pipe(all_questions, n_threads=16, batch_size=1000)):
+    for idx, doc in enumerate(nlp.pipe(all_questions, batch_size=1000)):
         guid = idx_to_ques[idx]
         ent_list = [(ent.text, ent.start_char, ent.end_char, ent.label_) for ent in doc.ents]
         ques_guid2ner[guid] = ent_list

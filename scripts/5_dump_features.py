@@ -350,7 +350,10 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length, max_query_
 
         for (i, token) in enumerate(example.doc_tokens):
             orig_to_tok_index.append(len(all_doc_tokens))
-            sub_tokens = tokenizer.tokenize(token, add_prefix_space=True)
+            if is_roberta:
+                sub_tokens = tokenizer.tokenize(token, add_prefix_space=True)
+            else:
+                sub_tokens = tokenizer.tokenize(token)
             for sub_token in sub_tokens:
                 tok_to_orig_index.append(i+len(example.question_tokens))
                 all_doc_tokens.append(sub_token)
@@ -639,7 +642,7 @@ if __name__ == '__main__':
     tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path, do_lower_case=args.do_lower_case)
 
     examples = read_hotpot_examples(para_file=args.para_path,
-                                    full_file=args.raw_data,
+                                    raw_file=args.raw_data,
                                     ner_file=args.ner_path,
                                     doc_link_file=args.doc_link_ner)
     cached_examples_file = os.path.join(args.output_dir,

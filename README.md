@@ -14,6 +14,8 @@ Then, you could start docker, e.g.
 ```bash
 docker run --shm-size=512m --gpus all -p 52022:22 --name zhanwen_hgn -v /home/zhanwen:/home/zhanwen -it studyfang/hgn:latest bash
 conda install pytorch==1.7.1 torchvision==0.8.2 torchaudio==0.7.2 cudatoolkit=11.0 -c pytorch
+pip install tensorboardX boto3 sentencepiece sacremoses ujson scikit-learn
+python -m spacy download en_core_web_lg
 ```
 
 ## Quick Start
