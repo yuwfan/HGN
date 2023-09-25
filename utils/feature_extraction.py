@@ -15,21 +15,14 @@
 # limitations under the License.
 """ BERT classification fine-tuning: utilities to work with GLUE tasks """
 
-from __future__ import absolute_import, division, print_function
-
-import csv
-import logging
-import os
-import sys
-from io import open
-from tqdm import tqdm
-
-import pandas
+from logging import getLogger
 from collections import Counter
+from tqdm import tqdm
+from pandas import read_csv as pd_read_csv
 from scipy.stats import pearsonr, spearmanr
-from sklearn.metrics import matthews_corrcoef, f1_score
+from sklearn.metrics import f1_score
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 
 class InputExample(object):
@@ -66,7 +59,7 @@ class HotpotQAProcessor(object):
     def get_examples(self, input_file):
         logger.info("LOOKING AT {}".format(input_file))
         return self._create_examples(
-            pandas.read_csv(input_file), set_type=input_file)
+            pd_read_csv(input_file), set_type=input_file)
 
     def get_labels(self):
         return [0, 1]

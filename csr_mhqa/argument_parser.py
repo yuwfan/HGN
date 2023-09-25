@@ -1,19 +1,19 @@
 # coding=utf-8
 #/usr/bin/env python3
-import os
-import argparse
-import torch
-import json
-import logging
-import random
-import numpy as np
-
-from os.path import join
-
-from envs import DATASET_FOLDER, MODEL_FOLDER, OUTPUT_FOLDER
+from argparse import ArgumentParser
+from json import load as json_load
+from logging import getLogger
+from random import seed as random_seed
+from os import environ as os_environ, makedirs as os_makedirs
+from os.path import join as os_path_join
+from torch import manual_seed, device as torch_device, save as torch_save
+from torch.cuda import manual_seed_all, is_available, device_count, set_device
+from torch.distributed import init_process_group
+from numpy.random import seed as np_random_seed
+from envs import DATASET_FOLDER, OUTPUT_FOLDER
 from model_envs import ALL_MODELS, MODEL_CLASSES
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 
 def boolean_string(s):
@@ -22,7 +22,7 @@ def boolean_string(s):
     return s.lower() == 'true'
 
 def json_to_argv(json_file):
-    j = json.load(open(json_file))
+    j = json_load(open(json_file))
     argv = []
     for k, v in j.items():
         new_v = str(v) if v is not None else None
@@ -30,27 +30,27 @@ def json_to_argv(json_file):
     return argv
 
 def set_seed(args):
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    random_seed(args.seed)
+    np_random_seed(args.seed)
+    manual_seed(args.seed)
     if args.n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)
+        manual_seed_all(args.seed)
 
 def complete_default_train_parser(args):
     if args.gpu_id:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
+        os_environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
 
     # set n_gpu
     if args.local_rank == -1:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch_device("cuda" if is_available() else "cpu")
         if args.data_parallel:
-            args.n_gpu = torch.cuda.device_count()
+            args.n_gpu = device_count()
         else:
             args.n_gpu = 1
     else:
-        torch.cuda.set_device(args.local_rank)
-        device = torch.device("cuda", args.local_rank)
-        torch.distributed.init_process_group(backend="nccl")
+        set_device(args.local_rank)
+        device = torch_device("cuda", args.local_rank)
+        init_process_group(backend="nccl")
         args.n_gpu = 1
     args.device = device
 
@@ -68,17 +68,17 @@ def complete_default_train_parser(args):
         args.exp_name = '_'.join([args.encoder_name_or_path,
                           'lr' + str(args.learning_rate),
                           'bs' + str(args.batch_size)])
-    args.exp_name = os.path.join(args.output_dir, args.exp_name)
+    args.exp_name = os_path_join(args.output_dir, args.exp_name)
 
     set_seed(args)
-    os.makedirs(args.exp_name, exist_ok=True)
-    torch.save(args, join(args.exp_name, "training_args.bin"))
+    os_makedirs(args.exp_name, exist_ok=True)
+    torch_save(args, os_path_join(args.exp_name, "training_args.bin"))
 
     return args
 
 
 def default_train_parser():
-    parser = argparse.ArgumentParser()
+    parser = ArgumentParser()
 
     parser.add_argument('--output_dir',
                         type=str,
@@ -94,7 +94,7 @@ def default_train_parser():
                         help="configuration file for command parser")
     parser.add_argument("--dev_gold_file",
                         type=str,
-                        default=join(DATASET_FOLDER, 'data_raw', 'hotpot_dev_distractor_v1.json'))
+                        default=os_path_join(DATASET_FOLDER, 'data_raw', 'hotpot_dev_distractor_v1.json'))
 
     # model
     parser.add_argument("--model_type",

@@ -1,8 +1,8 @@
-from models.layers import *
-from csr_mhqa.utils import count_parameters
+from torch.nn import Module, ModuleList, Linear
+from models.layers import BiAttention, LSTMWrapper, GatedAttention, PredictionLayer, GraphBlock, mean_pooling
 
 
-class HierarchicalGraphNetwork(nn.Module):
+class HierarchicalGraphNetwork(Module):
     """
     Packing Query Version
     """
@@ -15,7 +15,7 @@ class HierarchicalGraphNetwork(nn.Module):
                                         memory_dim=config.input_dim,
                                         hid_dim=config.hidden_dim,
                                         dropout=config.bi_attn_drop)
-        self.bi_attn_linear = nn.Linear(config.hidden_dim * 4, config.hidden_dim)
+        self.bi_attn_linear = Linear(config.hidden_dim * 4, config.hidden_dim)
 
         self.hidden_dim = config.hidden_dim
 
@@ -24,7 +24,7 @@ class HierarchicalGraphNetwork(nn.Module):
                                      n_layer=1,
                                      dropout=config.lstm_drop)
 
-        self.graph_blocks = nn.ModuleList()
+        self.graph_blocks = ModuleList()
         for _ in range(self.config.num_gnn_layers):
             self.graph_blocks.append(GraphBlock(self.config.q_attn, config))
 

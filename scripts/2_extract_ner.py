@@ -1,17 +1,15 @@
-import spacy
-import json
-import os
-import re
-import sys
-import itertools
+from json import load as json_load, dump as json_dump
+from re import sub as re_sub
+from sys import argv
+from itertools import chain
+from spacy import load as spacy_load
+from_iterable = chain.from_iterable
 
-from tqdm import tqdm
+input_file = argv[1]
+ner_file = argv[2]
+output_file = argv[3]
 
-input_file = sys.argv[1]
-ner_file = sys.argv[2]
-output_file = sys.argv[3]
-
-nlp = spacy.load("en_core_web_lg", disable=['parser'])
+nlp = spacy_load("en_core_web_lg", disable=['parser'])
 # ref: https://spacy.io/api/annotation#named-entities
 ent_type = set(["PERSON", "NORP", "FAC", "ORG", "GPE", "LOC", "PRODUCT", "EVENT", "WORK_OF_ART", "LAW", "LANGUAGE"])
             #"DATE", "TIME", "PERCENT", "MONEY", "QUANTITY", "ORDINAL", "CARDINAL"]
@@ -23,13 +21,13 @@ def extract_ner_from_titles(sent, titles, context_ners=None):
     candidates = set()
     if context_ners is not None:
         for doc_ner in context_ners:
-            all_ents = itertools.chain.from_iterable(doc_ner[1])
+            all_ents = from_iterable(doc_ner[1])
             for ent in all_ents:
                 if ent[3] in ent_type:
                     candidates.add(ent[0])
 
     for title in titles:
-        stripped_title = re.sub(r' \(.*?\)$', '', title)
+        stripped_title = re_sub(r' \(.*?\)$', '', title)
         start_pos = sent.lower().find(stripped_title.lower())
         if start_pos != -1:
             end_pos = start_pos + len(stripped_title)
@@ -37,7 +35,7 @@ def extract_ner_from_titles(sent, titles, context_ners=None):
             matched.append((title, start_pos, end_pos, 'TITLE'))
 
     for word in candidates:
-        word = re.sub(r' \(.*?\)$', '', word)
+        word = re_sub(r' \(.*?\)$', '', word)
         start_pos = sent.lower().find(word.lower())
         if start_pos != -1:
             end_pos = start_pos + len(word)
@@ -91,9 +89,9 @@ def extract_context_ner(full_data, ner_data=None):
 
     return context_guid2ner
 
-data = json.load(open(input_file, 'r'))
+data = json_load(open(input_file, 'r'))
 # ner_data is from spacy which has been extracted in 0_build_db.py
-ner_data = json.load(open(ner_file, 'r'))
+ner_data = json_load(open(ner_file, 'r'))
 ques_guid2ner = extract_question_ner(data)
 context_guid2ner = extract_context_ner(data, ner_data)
 
@@ -117,4 +115,4 @@ for case in data:
     output_data[guid]['question'] = ques_ent_1 + ques_ent_2
     output_data[guid]['context'] = context_ners
 
-json.dump(output_data, open(output_file, 'w'))
+json_dump(output_data, open(output_file, 'w'))

@@ -6,28 +6,28 @@
 # LICENSE file in the root directory of this source tree.
 """A script to read in and store documents in a sqlite database."""
 
-import argparse
-import sqlite3
-import json
-import os
-import logging
-import importlib.util
-import bz2
-import pickle
-import spacy
-
+from argparse import ArgumentParser
+from json import loads as json_loads
+from os import walk as os_walk
+from os.path import isfile as os_path_isfile, isdir as os_path_isdir, join as os_path_join
 from multiprocessing import Pool as ProcessPool
+from logging import getLogger, INFO, Formatter, StreamHandler
+from importlib.util import spec_from_file_location, module_from_spec
+from bz2 import open as bz2_open
+from sqlite3 import connect as sqlite3_connect
 from tqdm import tqdm
-from drqa.retriever import utils
+from pickle import dumps as pickle_dumps
+from spacy import load as spacy_load
+from drqa.retriever.utils import normalize
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-fmt = logging.Formatter('%(asctime)s: [ %(message)s ]', '%m/%d/%Y %I:%M:%S %p')
-console = logging.StreamHandler()
+logger = getLogger()
+logger.setLevel(INFO)
+fmt = Formatter('%(asctime)s: [ %(message)s ]', '%m/%d/%Y %I:%M:%S %p')
+console = StreamHandler()
 console.setFormatter(fmt)
 logger.addHandler(console)
 
-nlp = spacy.load("en_core_web_lg", disable=['parser'])
+nlp = spacy_load("en_core_web_lg", disable=['parser'])
 
 # ------------------------------------------------------------------------------
 # Import helper
@@ -43,8 +43,8 @@ def init(filename):
 
 def import_module(filename):
     """Import a module given a full path to the file."""
-    spec = importlib.util.spec_from_file_location('doc_filter', filename)
-    module = importlib.util.module_from_spec(spec)
+    spec = spec_from_file_location('doc_filter', filename)
+    module = module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
@@ -56,12 +56,12 @@ def import_module(filename):
 
 def iter_files(path):
     """Walk through all files located under a root path."""
-    if os.path.isfile(path):
+    if os_path_isfile(path):
         yield path
-    elif os.path.isdir(path):
-        for dirpath, _, filenames in os.walk(path):
+    elif os_path_isdir(path):
+        for dirpath, _, filenames in os_walk(path):
             for f in filenames:
-                yield os.path.join(dirpath, f)
+                yield os_path_join(dirpath, f)
     else:
         raise RuntimeError('Path %s is invalid' % path)
 
@@ -70,10 +70,10 @@ def get_contents(filename):
     """Parse the contents of a file. Each line is a JSON encoded document."""
     global PREPROCESS_FN
     documents = []
-    with bz2.open(filename, 'rb') as f:
+    with bz2_open(filename, 'rb') as f:
         for line in f:
             # Parse document
-            doc = json.loads(line)
+            doc = json_loads(line)
             # Maybe preprocess the document with custom function
             if PREPROCESS_FN:
                 doc = PREPROCESS_FN(doc)
@@ -82,15 +82,15 @@ def get_contents(filename):
                 continue
             # Add the document
             assert len(doc['text']) == len(doc['text_with_links'])
-            _text, _text_with_links = pickle.dumps(doc['text']), pickle.dumps(doc['text_with_links'])
+            _text, _text_with_links = pickle_dumps(doc['text']), pickle_dumps(doc['text_with_links'])
 
             _text_ner = []
             for sent in doc['text']:
                 ent_list = [(ent.text, ent.start_char, ent.end_char, ent.label_) for ent in nlp(sent).ents]
                 _text_ner.append(ent_list)
-            _text_ner_str = pickle.dumps(_text_ner)
+            _text_ner_str = pickle_dumps(_text_ner)
 
-            documents.append((utils.normalize(doc['id']), doc['url'], doc['title'], _text, _text_with_links, _text_ner_str, len(doc['text'])))
+            documents.append((normalize(doc['id']), doc['url'], doc['title'], _text, _text_with_links, _text_ner_str, len(doc['text'])))
 
     return documents
 
@@ -106,11 +106,11 @@ def store_contents(data_path, save_path, preprocess, num_workers=None):
           in and outputs a structured doc.
         num_workers: Number of parallel processes to use when reading docs.
     """
-    if os.path.isfile(save_path):
+    if os_path_isfile(save_path):
         raise RuntimeError('%s already exists! Not overwriting.' % save_path)
 
     logger.info('Reading into database...')
-    conn = sqlite3.connect(save_path)
+    conn = sqlite3_connect(save_path)
     c = conn.cursor()
     c.execute("CREATE TABLE documents (id PRIMARY KEY, url, title, text, text_with_links, text_ner, sent_num);")
 
@@ -134,7 +134,7 @@ def store_contents(data_path, save_path, preprocess, num_workers=None):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    parser = ArgumentParser()
     parser.add_argument('data_path', type=str, help='/path/to/data')
     parser.add_argument('save_path', type=str, help='/path/to/saved/db.db')
     parser.add_argument('--preprocess', type=str, default=None,

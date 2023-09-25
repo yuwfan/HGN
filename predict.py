@@ -1,20 +1,16 @@
-import numpy as np
-import logging
-import sys
-
-from os.path import join
-
+from logging import basicConfig, getLogger, INFO
+from sys import argv
+from os.path import join as os_path_join
+from torch import load as torch_load
 from csr_mhqa.argument_parser import default_train_parser, complete_default_train_parser, json_to_argv
-from csr_mhqa.data_processing import Example, InputFeatures, DataHelper
-from csr_mhqa.utils import *
-
-from models.HGN import *
-from model_envs import MODEL_CLASSES, ALL_MODELS
-
-logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+from csr_mhqa.data_processing import DataHelper
+from csr_mhqa.utils import load_encoder_model, eval_model
+from models.HGN import HierarchicalGraphNetwork
+from model_envs import MODEL_CLASSES
+basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                     datefmt='%m/%d/%Y %H:%M:%S',
-                    level=logging.INFO)
-logger = logging.getLogger(__name__)
+                    level=INFO)
+logger = getLogger(__name__)
 
 #########################################################################
 # Initialize arguments
@@ -22,11 +18,11 @@ logger = logging.getLogger(__name__)
 parser = default_train_parser()
 
 logger.info("IN CMD MODE")
-args_config_provided = parser.parse_args(sys.argv[1:])
+args_config_provided = parser.parse_args(argv[1:])
 if args_config_provided.config_file is not None:
-    argv = json_to_argv(args_config_provided.config_file) + sys.argv[1:]
+    argv = json_to_argv(args_config_provided.config_file) + argv[1:]
 else:
-    argv = sys.argv[1:]
+    argv = argv[1:]
 args = parser.parse_args(argv)
 args = complete_default_train_parser(args)
 
@@ -54,8 +50,8 @@ dev_dataloader = helper.dev_loader
 config_class, model_encoder, tokenizer_class = MODEL_CLASSES[args.model_type]
 config = config_class.from_pretrained(args.encoder_name_or_path)
 
-encoder_path = join(args.exp_name, 'encoder.pkl')
-model_path = join(args.exp_name, 'model.pkl')
+encoder_path = os_path_join(args.exp_name, 'encoder.pkl')
+model_path = os_path_join(args.exp_name, 'model.pkl')
 logger.info("Loading encoder from: {}".format(encoder_path))
 logger.info("Loading model from: {}".format(model_path))
 
@@ -63,9 +59,9 @@ encoder, _ = load_encoder_model(args.encoder_name_or_path, args.model_type)
 model = HierarchicalGraphNetwork(config=args)
 
 if encoder_path is not None:
-    encoder.load_state_dict(torch.load(encoder_path))
+    encoder.load_state_dict(torch_load(encoder_path))
 if model_path is not None:
-    model.load_state_dict(torch.load(model_path))
+    model.load_state_dict(torch_load(model_path))
 
 encoder.to(args.device)
 model.to(args.device)
@@ -76,8 +72,8 @@ model.eval()
 #########################################################################
 # Evaluation
 ##########################################################################
-output_pred_file = join(args.exp_name, 'pred.json')
-output_eval_file = join(args.exp_name, 'eval.txt')
+output_pred_file = os_path_join(args.exp_name, 'pred.json')
+output_eval_file = os_path_join(args.exp_name, 'eval.txt')
 
 metrics, threshold = eval_model(args, encoder, model,
                                 dev_dataloader, dev_example_dict, dev_feature_dict,

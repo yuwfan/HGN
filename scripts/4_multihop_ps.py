@@ -1,21 +1,17 @@
-import spacy
-import json
-import os
-import re
-import torch
-import numpy as np
-import sys
-
+from sys import argv
+from json import load as json_load, dump as json_dump
+from re import sub as re_sub
 from tqdm import tqdm
-from collections import Counter
+from numpy import zeros as np_zeros, float32 as np_float32
+from torch import tensor as torch_tensor, from_numpy as torch_from_numpy, matmul as torch_matmul
 
-assert len(sys.argv) == 6
+assert len(argv) == 6
 
-raw_data = json.load(open(sys.argv[1], 'r'))
-doc_link_data = json.load(open(sys.argv[2], 'r'))
-ent_data = json.load(open(sys.argv[3], 'r'))
-para_data = json.load(open(sys.argv[4], 'r'))
-output_file = sys.argv[5]
+raw_data = json_load(open(argv[1], 'r'))
+doc_link_data = json_load(open(argv[2], 'r'))
+ent_data = json_load(open(argv[3], 'r'))
+para_data = json_load(open(argv[4], 'r'))
+output_file = argv[5]
 
 def select_titles(question_text, question_entities):
     def custom_key(x):
@@ -31,7 +27,7 @@ def select_titles(question_text, question_entities):
         if ent[3] != 'TITLE' :
             continue
 
-        stripped_ent = re.sub(r' \(.*?\)$', '', ent[0])
+        stripped_ent = re_sub(r' \(.*?\)$', '', ent[0])
         if stripped_ent in title_set:
             continue
 
@@ -82,7 +78,7 @@ def build_title_to_entities(context, filter_ent_type=[]):
 def build_PG(titles):
     # build hyperlink graph
     N = len(titles)
-    para_adj = np.zeros((N, N), dtype=np.float32)
+    para_adj = np_zeros((N, N), dtype=np_float32)
 
     title_to_id, id_to_title = build_dict(titles)
 
@@ -101,7 +97,7 @@ def bfs_step(start_vec, graph):
     :param graph:       [E x E]
     :return: next_vec:  [E]
     """
-    next_vec = torch.matmul(start_vec.float().unsqueeze(0), graph)
+    next_vec = torch_matmul(start_vec.float().unsqueeze(0), graph)
     next_vec = (next_vec > 0).long().squeeze(0)
     return next_vec
 
@@ -156,7 +152,7 @@ for case in tqdm(raw_data):
 
     if sum(sel_para_idx) == 1:
         next_titles = []
-        next_vec = bfs_step(torch.tensor(sel_para_idx), torch.from_numpy(para_adj))
+        next_vec = bfs_step(torch_tensor(sel_para_idx), torch_from_numpy(para_adj))
         next_vec_list = next_vec.nonzero().squeeze(1).numpy().tolist()
         for sent_id in next_vec_list:
             next_titles.append(id_to_title[sent_id])
@@ -198,4 +194,4 @@ for case in tqdm(raw_data):
     selected_para_dict[guid].append(other_titles)
     para_num.append(sum(sel_para_idx))
 
-json.dump(selected_para_dict, open(output_file, 'w'))
+json_dump(selected_para_dict, open(output_file, 'w'))

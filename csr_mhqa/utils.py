@@ -1,25 +1,25 @@
-import pickle
-import torch
-import json
-import numpy as np
-import string
-import re
-import os
-import shutil
-import collections
-import logging
-import torch.nn.functional as F
-
-from torch import nn
+from json import dump as json_dump
+from os.path import exists as os_path_exists, is_file as os_path_isfile, join as os_path_join, dirname as os_path_dirname
+from shutil import move as shutil_move
+from collections import OrderedDict
+from logging import getLogger
 from tqdm import tqdm
-
-from model_envs import MODEL_CLASSES, ALL_MODELS
-from transformers.tokenization_bert import whitespace_tokenize, BasicTokenizer, BertTokenizer
+from numpy import arange as np_arange, argmax as np_argmax, prod as np_prod
+from torch import (
+    no_grad as torch_no_grad,
+    sigmoid as torch_sigmoid,
+    zeros as torch_zeros,
+)
+from torch.nn import CrossEntropyLoss, Parameter, ReLU, LeakyReLU, BCEWithLogitsLoss
+from torch.nn.functional import softmax as F_softmax
+from torch.nn.init import xavier_uniform_
+from transformers.tokenization_bert import BasicTokenizer
 from transformers import AdamW
-from eval.hotpot_evaluate_v1 import normalize_answer, eval as hotpot_eval
+from model_envs import MODEL_CLASSES
+from eval.hotpot_evaluate_v1 import eval as hotpot_eval
 from csr_mhqa.data_processing import IGNORE_INDEX
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 def load_encoder_model(encoder_name_or_path, model_type):
     if encoder_name_or_path in [None, 'None', 'none']:
@@ -31,11 +31,11 @@ def load_encoder_model(encoder_name_or_path, model_type):
         raise ValueError(f'config.json is not found at {encoder_name_or_path}')
 
     # check if is a path
-    if os.path.exists(encoder_name_or_path):
-        if os.path.isfile(os.path.join(encoder_name_or_path, 'pytorch_model.bin')):
-            encoder_file = os.path.join(encoder_name_or_path, 'pytorch_model.bin')
+    if os_path_exists(encoder_name_or_path):
+        if os_path_isfile(os_path_join(encoder_name_or_path, 'pytorch_model.bin')):
+            encoder_file = os_path_join(encoder_name_or_path, 'pytorch_model.bin')
         else:
-            encoder_file = os.path.join(encoder_name_or_path, 'encoder.pkl')
+            encoder_file = os_path_join(encoder_name_or_path, 'encoder.pkl')
         encoder = model_encoder.from_pretrained(encoder_file, config=config)
     else:
         encoder = model_encoder.from_pretrained(encoder_name_or_path, config=config)
@@ -69,8 +69,8 @@ def get_optimizer(encoder, model, args, learning_rate, remove_pooler=False):
     return optimizer
 
 def compute_loss(args, batch, start, end, para, sent, ent, q_type):
-    criterion = nn.CrossEntropyLoss(reduction='mean', ignore_index=IGNORE_INDEX)
-    binary_criterion = nn.BCEWithLogitsLoss(reduction='mean')
+    criterion = CrossEntropyLoss(reduction='mean', ignore_index=IGNORE_INDEX)
+    binary_criterion = BCEWithLogitsLoss(reduction='mean')
     loss_span = args.ans_lambda * (criterion(start, batch['y1']) + criterion(end, batch['y2']))
     loss_type = args.type_lambda * criterion(q_type, batch['q_type'])
 
@@ -96,12 +96,12 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
 
     dataloader.refresh()
 
-    thresholds = np.arange(0.1, 1.0, 0.05)
+    thresholds = np_arange(0.1, 1.0, 0.05)
     N_thresh = len(thresholds)
     total_sp_dict = [{} for _ in range(N_thresh)]
 
     for batch in tqdm(dataloader):
-        with torch.no_grad():
+        with torch_no_grad():
             inputs = {'input_ids':      batch['context_idxs'],
                       'attention_mask': batch['context_mask'],
                       'token_type_ids': batch['segment_idxs'] if args.model_type in ['bert', 'xlnet'] else None}  # XLM don't use segment_ids
@@ -111,7 +111,7 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
             batch['context_mask'] = batch['context_mask'].float().to(args.device)
             start, end, q_type, paras, sent, ent, yp1, yp2 = model(batch, return_yp=True)
 
-        type_prob = F.softmax(q_type, dim=1).data.cpu().numpy()
+        type_prob = F_softmax(q_type, dim=1).data.cpu().numpy()
         answer_dict_, answer_type_dict_, answer_type_prob_dict_ = convert_to_tokens(example_dict, feature_dict, batch['ids'],
                                                                                     yp1.data.cpu().numpy().tolist(),
                                                                                     yp2.data.cpu().numpy().tolist(),
@@ -121,7 +121,7 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
         answer_type_prob_dict.update(answer_type_prob_dict_)
         answer_dict.update(answer_dict_)
 
-        predict_support_np = torch.sigmoid(sent[:, :, 1]).data.cpu().numpy()
+        predict_support_np = torch_sigmoid(sent[:, :, 1]).data.cpu().numpy()
 
         for i in range(predict_support_np.shape[0]):
             cur_sp_pred = [[] for _ in range(N_thresh)]
@@ -150,40 +150,40 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
                           'sp': total_sp_dict[thresh_i],
                           'type': answer_type_dict,
                           'type_prob': answer_type_prob_dict}
-            tmp_file = os.path.join(os.path.dirname(pred_file), 'tmp.json')
+            tmp_file = os_path_join(os_path_dirname(pred_file), 'tmp.json')
             with open(tmp_file, 'w') as f:
-                json.dump(prediction, f)
+                json_dump(prediction, f)
             metrics = hotpot_eval(tmp_file, dev_gold_file)
             if metrics['joint_f1'] >= best_joint_f1:
                 best_joint_f1 = metrics['joint_f1']
                 best_threshold = thresholds[thresh_i]
                 best_metrics = metrics
-                shutil.move(tmp_file, pred_file)
+                shutil_move(tmp_file, pred_file)
 
         return best_metrics, best_threshold
 
     best_metrics, best_threshold = choose_best_threshold(answer_dict, prediction_file)
-    json.dump(best_metrics, open(eval_file, 'w'))
+    json_dump(best_metrics, open(eval_file, 'w'))
 
     return best_metrics, best_threshold
 
 
 def get_weights(size, gain=1.414):
-    weights = nn.Parameter(torch.zeros(size=size))
-    nn.init.xavier_uniform_(weights, gain=gain)
+    weights = Parameter(torch_zeros(size=size))
+    xavier_uniform_(weights, gain=gain)
     return weights
 
 
 def get_bias(size):
-    bias = nn.Parameter(torch.zeros(size=size))
+    bias = Parameter(torch_zeros(size=size))
     return bias
 
 
 def get_act(act):
     if act.startswith('lrelu'):
-        return nn.LeakyReLU(float(act.split(':')[1]))
+        return LeakyReLU(float(act.split(':')[1]))
     elif act == 'relu':
-        return nn.ReLU()
+        return ReLU()
     else:
         raise NotImplementedError
 
@@ -217,7 +217,7 @@ def get_final_text(pred_text, orig_text, do_lower_case, verbose_logging=False):
 
     def _strip_spaces(text):
         ns_chars = []
-        ns_to_s_map = collections.OrderedDict()
+        ns_to_s_map = OrderedDict()
         for (i, c) in enumerate(text):
             if c == " ":
                 continue
@@ -285,7 +285,7 @@ def convert_to_tokens(examples, features, ids, y1, y2, q_type_prob):
     answer_dict, answer_type_dict = {}, {}
     answer_type_prob_dict = {}
 
-    q_type = np.argmax(q_type_prob, 1)
+    q_type = np_argmax(q_type_prob, 1)
 
     def get_ans_from_pos(qid, y1, y2):
         feature = features[qid]
@@ -322,7 +322,7 @@ def convert_to_tokens(examples, features, ids, y1, y2, q_type_prob):
             answer_text = 'yes'
         elif q_type[i] == 2:
             answer_text = 'no'
-        else: 
+        else:
             raise ValueError("question type error")
 
         answer_dict[qid] = answer_text
@@ -340,7 +340,7 @@ def count_parameters(model, trainable_only=True, is_dict=False):
     :return:
     """
     if is_dict:
-        return sum(np.prod(list(model[k].size())) for k in model)
+        return sum(np_prod(list(model[k].size())) for k in model)
     if trainable_only:
         return sum(p.numel() for p in model.parameters() if p.requires_grad)
     else:
