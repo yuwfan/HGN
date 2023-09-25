@@ -110,14 +110,8 @@ else:
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.num_train_epochs
 
 optimizer = get_optimizer(encoder, model, args, learning_rate, remove_pooler=False)
-if args.fp16:
-    try:
-        from apex import amp
-    except ImportError:
-        raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-    models, optimizer = amp.initialize([encoder, model], optimizer, opt_level=args.fp16_opt_level)
-    assert len(models) == 2
-    encoder, model = models
+use_amp = args.fp16
+scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
 # Distributed training (should be after apex fp16 initialization)
 if args.local_rank != -1:
@@ -154,52 +148,46 @@ for epoch in train_iterator:
     for step, batch in enumerate(epoch_iterator):
         encoder.train()
         model.train()
+        with torch.autocast(device_type=args.device, dtype=torch.float16, enabled=use_amp):
+            inputs = {'input_ids':      batch['context_idxs'],
+                    'attention_mask': batch['context_mask'],
+                    'token_type_ids': batch['segment_idxs'] if args.model_type in ['bert', 'xlnet'] else None}  # XLM don't use segment_ids
 
-        inputs = {'input_ids':      batch['context_idxs'],
-                  'attention_mask': batch['context_mask'],
-                  'token_type_ids': batch['segment_idxs'] if args.model_type in ['bert', 'xlnet'] else None}  # XLM don't use segment_ids
+            batch['context_encoding'] = encoder(**inputs)[0]
+            batch['context_mask'] = batch['context_mask'].float().to(args.device)
+            start, end, q_type, paras, sents, ents = model(batch)
 
-        batch['context_encoding'] = encoder(**inputs)[0]
-        batch['context_mask'] = batch['context_mask'].float().to(args.device)
-        start, end, q_type, paras, sents, ents, _, _ = model(batch, return_yp=True)
+            loss_list = compute_loss(args, batch, start, end, paras, sents, ents, q_type)
+            del batch
 
-        loss_list = compute_loss(args, batch, start, end, paras, sents, ents, q_type)
-        del batch
+            if args.n_gpu > 1:
+                for loss in loss_list:
+                    loss = loss.mean() # mean() to average on multi-gpu parallel training
+            if args.gradient_accumulation_steps > 1:
+                for loss in loss_list:
+                    loss = loss / args.gradient_accumulation_steps
+            scaler.scale(loss_list[0]).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(optimizer.param_groups, max_norm=args.max_grad_norm)
+            for idx in range(len(loss_name)):
+                if not isinstance(loss_list[idx], int):
+                    tr_loss[idx] += loss_list[idx].data.item()
+                else:
+                    tr_loss[idx] += loss_list[idx]
 
-        if args.n_gpu > 1:
-            for loss in loss_list:
-                loss = loss.mean() # mean() to average on multi-gpu parallel training
-        if args.gradient_accumulation_steps > 1:
-            for loss in loss_list:
-                loss = loss / args.gradient_accumulation_steps
-        if args.fp16:
-            with amp.scale_loss(loss_list[0], optimizer) as scaled_loss:
-                scaled_loss.backward()
-            torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
-        else:
-            loss_list[0].backward()
-            torch.nn.utils.clip_grad_norm_(encoder.parameters(), args.max_grad_norm)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            if (step + 1) % args.gradient_accumulation_steps == 0:
+                scaler.step(optimizer)
+                scaler.update()
+                scheduler.step()  # Update learning rate schedule
+                optimizer.zero_grad()
+                global_step += 1
 
-        for idx in range(len(loss_name)):
-            if not isinstance(loss_list[idx], int):
-                tr_loss[idx] += loss_list[idx].data.item()
-            else:
-                tr_loss[idx] += loss_list[idx]
+                if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
+                    avg_loss = [ (_tr_loss - _logging_loss) / (args.logging_steps*args.gradient_accumulation_steps)
+                                for (_tr_loss, _logging_loss) in zip(tr_loss, logging_loss)]
 
-        if (step + 1) % args.gradient_accumulation_steps == 0:
-            optimizer.step()
-            scheduler.step()  # Update learning rate schedule
-            encoder.zero_grad()
-            model.zero_grad()
-            global_step += 1
-
-            if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
-                avg_loss = [ (_tr_loss - _logging_loss) / (args.logging_steps*args.gradient_accumulation_steps)
-                             for (_tr_loss, _logging_loss) in zip(tr_loss, logging_loss)]
-
-                loss_str = "step[{0:6}] " + " ".join(['%s[{%d:.5f}]' % (loss_name[i], i+1) for i in range(len(avg_loss))])
-                logger.info(loss_str.format(global_step, *avg_loss))
+                    loss_str = "step[{0:6}] " + " ".join(['%s[{%d:.5f}]' % (loss_name[i], i+1) for i in range(len(avg_loss))])
+                    logger.info(loss_str.format(global_step, *avg_loss))
 
                 # tensorboard
                 tb_writer.add_scalar('lr', scheduler.get_lr()[0], global_step)

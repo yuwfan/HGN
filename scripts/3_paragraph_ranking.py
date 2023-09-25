@@ -217,14 +217,8 @@ if __name__ == "__main__":
                                         config=config,
                                         state_dict=model_state_dict)
     model.cuda()
-    if args.fp16:
-        try:
-            from apex import amp
-        except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use fp16 training.")
-        model = amp.initialize(model, opt_level=args.fp16_opt_level)
-
-    score = evaluate(args, model, tokenizer, prefix="")
+    with torch.autocast(device_type=args.device.__str__(), dtype=torch.float16, enabled=args.fp16):
+        score = evaluate(args, model, tokenizer, prefix="")
 
     # load source data
     source_data = json.load(open(args.raw_data, 'r'))
