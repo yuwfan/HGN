@@ -250,7 +250,7 @@ class GraphBlock(Module):
         super(GraphBlock, self).__init__()
         self.device = config.device
         self.hidden_dim = hidden_dim = config.hidden_dim
-        self.q_update = q_update = config.q_updateq_update
+        self.q_update = q_update = config.q_update
         input_dim = config.input_dim
 
         if q_update:
