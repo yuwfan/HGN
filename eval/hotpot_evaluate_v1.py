@@ -3,6 +3,8 @@ from re import sub as re_sub
 from string import punctuation
 from collections import Counter
 from ujson import load as ujson_load
+EXCLUDE = set(punctuation)
+ZERO_METRIC: tuple[Literal[0], Literal[0], Literal[0]] = (0.0, 0.0, 0.0)
 
 def normalize_answer(s):
 
@@ -13,8 +15,7 @@ def normalize_answer(s):
         return ' '.join(text.split())
 
     def remove_punc(text):
-        exclude = set(punctuation)
-        return ''.join(ch for ch in text if ch not in exclude)
+        return ''.join(ch for ch in text if ch not in EXCLUDE)
 
     def lower(text):
         return text.lower()
@@ -26,11 +27,10 @@ def f1_score(prediction, ground_truth):
     normalized_prediction = normalize_answer(prediction)
     normalized_ground_truth = normalize_answer(ground_truth)
 
-    ZERO_METRIC = (0, 0, 0)
-
-    if normalized_prediction in ['yes', 'no', 'noanswer'] and normalized_prediction != normalized_ground_truth:
+    is_unequal: bool = normalized_prediction != normalized_ground_truth
+    if normalized_prediction in ['yes', 'no', 'noanswer'] and is_unequal:
         return ZERO_METRIC
-    if normalized_ground_truth in ['yes', 'no', 'noanswer'] and normalized_prediction != normalized_ground_truth:
+    if normalized_ground_truth in ['yes', 'no', 'noanswer'] and is_unequal:
         return ZERO_METRIC
 
     prediction_tokens = normalized_prediction.split()
@@ -69,9 +69,8 @@ def update_sp(metrics, prediction, gold):
     for e in gold_sp_pred:
         if e not in cur_sp_pred:
             fn += 1
-    prec = 1.0 * tp / (tp + fp) if tp + fp > 0 else 0.0
-    recall = 1.0 * tp / (tp + fn) if tp + fn > 0 else 0.0
-    f1 = 2 * prec * recall / (prec + recall) if prec + recall > 0 else 0.0
+    prec_recall: float = prec + recall
+    f1: float = 2 * prec * recall / prec_recall if prec_recall > 0 else 0.0
     em = 1.0 if fp + fn == 0 else 0.0
     metrics['sp_em'] += em
     metrics['sp_f1'] += f1
@@ -89,28 +88,31 @@ def eval(prediction_file, gold_file):
         'sp_em': 0, 'sp_f1': 0, 'sp_prec': 0, 'sp_recall': 0,
         'joint_em': 0, 'joint_f1': 0, 'joint_prec': 0, 'joint_recall': 0}
 
+    answer = prediction['answer']
+    sp = prediction['sp']
     total = 0
     for dp in gold:
         cur_id = dp['_id']
         can_eval_joint = True
-        if cur_id not in prediction['answer']:
+        if cur_id not in answer:
             #print('missing answer {}'.format(cur_id))
             can_eval_joint = False
         else:
             em, prec, recall = update_answer(
-                metrics, prediction['answer'][cur_id], dp['answer'])
-        if cur_id not in prediction['sp']:
+                metrics, answer[cur_id], dp['answer'])
+        if cur_id not in sp:
             #print('missing sp fact {}'.format(cur_id))
             can_eval_joint = False
         else:
             sp_em, sp_prec, sp_recall = update_sp(
-                metrics, prediction['sp'][cur_id], dp['supporting_facts'])
+                metrics, sp[cur_id], dp['supporting_facts'])
 
         if can_eval_joint:
             joint_prec = prec * sp_prec
             joint_recall = recall * sp_recall
-            if joint_prec + joint_recall > 0:
-                joint_f1 = 2 * joint_prec * joint_recall / (joint_prec + joint_recall)
+            prec_recall = joint_prec + joint_recall
+            if prec_recall > 0:
+                joint_f1 = 2 * joint_prec * joint_recall / prec_recall
             else:
                 joint_f1 = 0.
             joint_em = em * sp_em

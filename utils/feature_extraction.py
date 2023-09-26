@@ -96,17 +96,19 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
     label_cnt = Counter()
 
     features = []
+    tokenize: function = tokenizer.tokenize
+    convert_tokens_to_ids: function = tokenizer.convert_tokens_to_ids
+    special_tokens_count: int = 4 if sep_token_extra else 3
+    max_length: int = max_seq_length - special_tokens_count
     for (ex_index, example) in enumerate(tqdm(examples)):
         if ex_index % 10000 == 0:
             logger.info("Writing example %d of %d" % (ex_index, len(examples)))
 
-        tokens_a = tokenizer.tokenize(example.text_a)
-        tokens_b = None
+        tokens_a: list[str] = tokenize(example.text_a)
 
         # Account for [CLS], [SEP], [SEP] with "- 3"
-        special_tokens_count = 4 if sep_token_extra else 3
-        tokens_b = tokenizer.tokenize(example.text_b)
-        _truncate_seq_pair(tokens_a, tokens_b, max_seq_length - special_tokens_count)
+        tokens_b: list[str] = tokenize(example.text_b)
+        _truncate_seq_pair(tokens_a, tokens_b, max_length)
 
         # The convention in BERT is:
         # (a) For sequence pairs:
@@ -143,7 +145,7 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
             tokens = [cls_token] + tokens
             segment_ids = [cls_token_segment_id] + segment_ids
 
-        input_ids = tokenizer.convert_tokens_to_ids(tokens)
+        input_ids = convert_tokens_to_ids(tokens)
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.

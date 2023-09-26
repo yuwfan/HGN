@@ -8,43 +8,45 @@ class HierarchicalGraphNetwork(Module):
     """
     def __init__(self, config):
         super(HierarchicalGraphNetwork, self).__init__()
-        self.config = config
-        self.max_query_length = self.config.max_query_length
+        # Caching
+        input_dim: int = config.input_dim
+        hidden_dim: int = config.hidden_dim
+        bi_attn_drop: float = config.bi_attn_drop
+        self.max_query_length: int = config.max_query_length
+        self.num_gnn_layers = num_gnn_layers = config.num_gnn_layers
+        self.q_update = q_update = config.q_update
 
-        self.bi_attention = BiAttention(input_dim=config.input_dim,
-                                        memory_dim=config.input_dim,
-                                        hid_dim=config.hidden_dim,
-                                        dropout=config.bi_attn_drop)
-        self.bi_attn_linear = Linear(config.hidden_dim * 4, config.hidden_dim)
-
-        self.hidden_dim = config.hidden_dim
-
-        self.sent_lstm = LSTMWrapper(input_dim=config.hidden_dim,
-                                     hidden_dim=config.hidden_dim,
+        self.bi_attention = BiAttention(input_dim=input_dim,
+                                        memory_dim=input_dim,
+                                        hid_dim=hidden_dim,
+                                        dropout=bi_attn_drop)
+        self.bi_attn_linear = Linear(hidden_dim * 4, hidden_dim)
+        self.sent_lstm = LSTMWrapper(input_dim=hidden_dim,
+                                     hidden_dim=hidden_dim,
                                      n_layer=1,
                                      dropout=config.lstm_drop)
 
-        self.graph_blocks = ModuleList()
-        for _ in range(self.config.num_gnn_layers):
-            self.graph_blocks.append(GraphBlock(self.config.q_attn, config))
+        graph_blocks = ModuleList()
+        q_attn: bool = config.q_attn
+        for _ in range(num_gnn_layers):
+            graph_blocks.append(GraphBlock(q_attn, config))
+        self.graph_blocks = graph_blocks
+        self.ctx_attention = GatedAttention(input_dim=hidden_dim*2,
+                                            memory_dim=hidden_dim if q_update else hidden_dim*2,
+                                            hid_dim=config.ctx_attn_hidden_dim,
+                                            dropout=bi_attn_drop,
+                                            gate_method=config.ctx_attn)
 
-        self.ctx_attention = GatedAttention(input_dim=config.hidden_dim*2,
-                                            memory_dim=config.hidden_dim if config.q_update else config.hidden_dim*2,
-                                            hid_dim=self.config.ctx_attn_hidden_dim,
-                                            dropout=config.bi_attn_drop,
-                                            gate_method=self.config.ctx_attn)
-
-        q_dim = self.hidden_dim if config.q_update else config.input_dim
-
-        self.predict_layer = PredictionLayer(self.config, q_dim)
-
+        q_dim: int = hidden_dim if q_update else input_dim
+        self.predict_layer = PredictionLayer(config, q_dim)
     def forward(self, batch, return_yp):
         query_mapping = batch['query_mapping']
         context_encoding = batch['context_encoding']
 
         # extract query encoding
-        trunc_query_mapping = query_mapping[:, :self.max_query_length].contiguous()
-        trunc_query_state = (context_encoding * query_mapping.unsqueeze(2))[:, :self.max_query_length, :].contiguous()
+        max_query_length: int = self.max_query_length
+        trunc_query_mapping = query_mapping[:, :max_query_length].contiguous()
+        trunc_query_state = (context_encoding * query_mapping.unsqueeze(2))[:, :max_query_length, :].contiguous()
         # bert encoding query vec
         query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
 
@@ -55,15 +57,16 @@ class HierarchicalGraphNetwork(Module):
         input_state = self.bi_attn_linear(attn_output) # N x L x d
         input_state = self.sent_lstm(input_state, batch['context_lens'])
 
-        if self.config.q_update:
+        if self.q_update:
             query_vec = mean_pooling(trunc_query_state, trunc_query_mapping)
 
         para_logits, sent_logits = [], []
         para_predictions, sent_predictions, ent_predictions = [], [], []
 
-        for l in range(self.config.num_gnn_layers):
+        graph_blocks = self.graph_blocks
+        for l in range(self.num_gnn_layers):
             new_input_state, graph_state, graph_mask, sent_state, query_vec, para_logit, para_prediction, \
-            sent_logit, sent_prediction, ent_logit = self.graph_blocks[l](batch, input_state, query_vec)
+            sent_logit, sent_prediction, ent_logit = graph_blocks[l](batch, input_state, query_vec)
 
             para_logits.append(para_logit)
             sent_logits.append(sent_logit)

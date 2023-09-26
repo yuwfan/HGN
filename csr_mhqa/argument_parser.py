@@ -17,9 +17,10 @@ logger = getLogger(__name__)
 
 
 def boolean_string(s):
-    if s.lower() not in {'false', 'true'}:
+    s_lower: str = s.lower()
+    if s_lower not in {'false', 'true'}:
         raise ValueError('Not a valid boolean string')
-    return s.lower() == 'true'
+    return s_lower == 'true'
 
 def json_to_argv(json_file):
     j = json_load(open(json_file))
@@ -30,49 +31,57 @@ def json_to_argv(json_file):
     return argv
 
 def set_seed(args):
-    random_seed(args.seed)
-    np_random_seed(args.seed)
-    manual_seed(args.seed)
+    seed: int = args.seed
+    random_seed(seed)
+    np_random_seed(seed)
+    manual_seed(seed)
     if args.n_gpu > 0:
-        manual_seed_all(args.seed)
+        manual_seed_all(seed)
 
 def complete_default_train_parser(args):
-    if args.gpu_id:
-        os_environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu_id)
+    gpu_id: str = args.gpu_id
+    if gpu_id:
+        os_environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
     # set n_gpu
-    if args.local_rank == -1:
+    local_rank: int = args.local_rank
+    if local_rank == -1:
         device = torch_device("cuda" if is_available() else "cpu")
         if args.data_parallel:
-            args.n_gpu = device_count()
+            n_gpu = device_count()
         else:
-            args.n_gpu = 1
+            n_gpu = 1
     else:
-        set_device(args.local_rank)
-        device = torch_device("cuda", args.local_rank)
+        set_device(local_rank)
+        device = torch_device("cuda", local_rank)
         init_process_group(backend="nccl")
-        args.n_gpu = 1
+        n_gpu = 1
+    args.n_gpu = n_gpu
     args.device = device
 
-    args.num_gnn_layers = int(args.gnn.split(':')[1].split(',')[0])
-    args.num_gnn_heads = int(args.gnn.split(':')[1].split(',')[1])
-    if len(args.mask_edge_types):
-        args.mask_edge_types = list(map(int, args.mask_edge_types.split(',')))
+    gnn_str: str = args.gnn.split(':')[1].split(',')
+    args.num_gnn_layers = int(gnn_str[0])
+    args.num_gnn_heads = int(gnn_str[1])
+    mask_edge_types: str = args.mask_edge_types
+    if len(mask_edge_types):
+        args.mask_edge_types = list(map(int, mask_edge_types.split(',')))
     args.max_doc_len = 512
-    args.batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+    args.batch_size = batch_size = args.per_gpu_train_batch_size * max(1, n_gpu)
     # TODO: only support albert-xxlarge-v2 now
-    args.input_dim = 768 if 'base' in args.encoder_name_or_path else (4096 if 'albert' in args.encoder_name_or_path else 1024)
+    encoder_name_or_path: str = args.encoder_name_or_path
+    args.input_dim = 768 if 'base' in encoder_name_or_path else (4096 if 'albert' in encoder_name_or_path else 1024)
 
     # output dir name
-    if not args.exp_name:
-        args.exp_name = '_'.join([args.encoder_name_or_path,
+    exp_name: str = args.exp_name
+    if not exp_name:
+        exp_name = '_'.join([encoder_name_or_path,
                           'lr' + str(args.learning_rate),
-                          'bs' + str(args.batch_size)])
-    args.exp_name = os_path_join(args.output_dir, args.exp_name)
+                          'bs' + str(batch_size)])
+    args.exp_name = exp_name = os_path_join(args.output_dir, exp_name)
 
     set_seed(args)
-    os_makedirs(args.exp_name, exist_ok=True)
-    torch_save(args, os_path_join(args.exp_name, "training_args.bin"))
+    os_makedirs(exp_name, exist_ok=True)
+    torch_save(args, os_path_join(exp_name, "training_args.bin"))
 
     return args
 

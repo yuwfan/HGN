@@ -100,19 +100,24 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
     N_thresh = len(thresholds)
     total_sp_dict = [{} for _ in range(N_thresh)]
 
+    use_segment_idxs: bool = args.model_type in ['bert', 'xlnet']
+    device = args.device
     for batch in tqdm(dataloader):
         with torch_no_grad():
+            context_mask = batch['context_mask']
             inputs = {'input_ids':      batch['context_idxs'],
-                      'attention_mask': batch['context_mask'],
-                      'token_type_ids': batch['segment_idxs'] if args.model_type in ['bert', 'xlnet'] else None}  # XLM don't use segment_ids
+                      'attention_mask': context_mask,
+                      'token_type_ids': batch['segment_idxs'] if use_segment_idxs else None}  # XLM don't use segment_ids
             outputs = encoder(**inputs)
 
             batch['context_encoding'] = outputs[0]
-            batch['context_mask'] = batch['context_mask'].float().to(args.device)
+            batch['context_mask'] = context_mask.float().to(device)
+            del context_mask
             start, end, q_type, paras, sent, ent, yp1, yp2 = model(batch, return_yp=True)
 
         type_prob = F_softmax(q_type, dim=1).data.cpu().numpy()
-        answer_dict_, answer_type_dict_, answer_type_prob_dict_ = convert_to_tokens(example_dict, feature_dict, batch['ids'],
+        ids = batch['ids']
+        answer_dict_, answer_type_dict_, answer_type_prob_dict_ = convert_to_tokens(example_dict, feature_dict, ids,
                                                                                     yp1.data.cpu().numpy().tolist(),
                                                                                     yp2.data.cpu().numpy().tolist(),
                                                                                     type_prob)
@@ -123,17 +128,22 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
 
         predict_support_np = torch_sigmoid(sent[:, :, 1]).data.cpu().numpy()
 
+        predict_support_np_shape_1: int = predict_support_np.shape[1]
         for i in range(predict_support_np.shape[0]):
             cur_sp_pred = [[] for _ in range(N_thresh)]
-            cur_id = batch['ids'][i]
+            cur_id = ids[i]
 
-            for j in range(predict_support_np.shape[1]):
-                if j >= len(example_dict[cur_id].sent_names):
+            sent_names = example_dict[cur_id].sent_names
+            len_sent_names = len(sent_names)
+            for j in range(predict_support_np_shape_1):
+                if j >= len_sent_names:
                     break
 
+                predict_support_np_i_j = predict_support_np[i, j]
+                sent_names_j = sent_names[j]
                 for thresh_i in range(N_thresh):
-                    if predict_support_np[i, j] > thresholds[thresh_i]:
-                        cur_sp_pred[thresh_i].append(example_dict[cur_id].sent_names[j])
+                    if predict_support_np_i_j > thresholds[thresh_i]:
+                        cur_sp_pred[thresh_i].append(sent_names_j)
 
             for thresh_i in range(N_thresh):
                 if cur_id not in total_sp_dict[thresh_i]:
@@ -145,6 +155,7 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
         best_joint_f1 = 0
         best_metrics = None
         best_threshold = 0
+        tmp_file: str = os_path_join(os_path_dirname(pred_file), 'tmp.json')
         for thresh_i in range(N_thresh):
             prediction = {'answer': ans_dict,
                           'sp': total_sp_dict[thresh_i],
@@ -154,8 +165,9 @@ def eval_model(args, encoder, model, dataloader, example_dict, feature_dict, pre
             with open(tmp_file, 'w') as f:
                 json_dump(prediction, f)
             metrics = hotpot_eval(tmp_file, dev_gold_file)
-            if metrics['joint_f1'] >= best_joint_f1:
-                best_joint_f1 = metrics['joint_f1']
+            joint_f1 = metrics['joint_f1']
+            if joint_f1 >= best_joint_f1:
+                best_joint_f1 = joint_f1
                 best_threshold = thresholds[thresh_i]
                 best_metrics = metrics
                 shutil_move(tmp_file, pred_file)
@@ -295,7 +307,8 @@ def convert_to_tokens(examples, features, ids, y1, y2, q_type_prob):
         orig_all_tokens = example.question_tokens + example.doc_tokens
 
         final_text = " "
-        if y1 < len(tok_to_orig_map) and y2 < len(tok_to_orig_map):
+        len_tok_to_orig_map: int = len(tok_to_orig_map)
+        if y1 < len_tok_to_orig_map and y2 < len_tok_to_orig_map:
             orig_tok_start = tok_to_orig_map[y1]
             orig_tok_end = tok_to_orig_map[y2]
 
@@ -305,8 +318,8 @@ def convert_to_tokens(examples, features, ids, y1, y2, q_type_prob):
                 ques_end_idx = example.question_word_to_char_idx[orig_tok_end] + len(example.question_tokens[orig_tok_end])
                 final_text = example.question_text[ques_start_idx:ques_end_idx]
             else:
-                orig_tok_start -= len(example.question_tokens)
-                orig_tok_end -= len(example.question_tokens)
+                orig_tok_start -= ques_tok_len
+                orig_tok_end -= ques_tok_len
                 ctx_start_idx = example.ctx_word_to_char_idx[orig_tok_start]
                 ctx_end_idx = example.ctx_word_to_char_idx[orig_tok_end] + len(example.doc_tokens[orig_tok_end])
                 final_text = example.ctx_text[example.ctx_word_to_char_idx[orig_tok_start]:example.ctx_word_to_char_idx[orig_tok_end]+len(example.doc_tokens[orig_tok_end])]
@@ -316,18 +329,19 @@ def convert_to_tokens(examples, features, ids, y1, y2, q_type_prob):
     for i, qid in enumerate(ids):
         feature = features[qid]
         answer_text = ''
-        if q_type[i] in [0, 3]:
+        q_type_i = q_type[i]
+        if q_type_i in [0, 3]:
             answer_text = get_ans_from_pos(qid, y1[i], y2[i])
-        elif q_type[i] == 1:
+        elif q_type_i == 1:
             answer_text = 'yes'
-        elif q_type[i] == 2:
+        elif q_type_i == 2:
             answer_text = 'no'
         else:
             raise ValueError("question type error")
 
         answer_dict[qid] = answer_text
         answer_type_prob_dict[qid] = q_type_prob[i].tolist()
-        answer_type_dict[qid] = q_type[i].item()
+        answer_type_dict[qid] = q_type_i.item()
 
     return answer_dict, answer_type_dict, answer_type_prob_dict
 

@@ -47,15 +47,18 @@ dev_dataloader = helper.dev_loader
 #########################################################################
 # Initialize Model
 ##########################################################################
-config_class, model_encoder, tokenizer_class = MODEL_CLASSES[args.model_type]
-config = config_class.from_pretrained(args.encoder_name_or_path)
+model_type: str = args.model_type
+encoder_name_or_path: str = args.encoder_name_or_path
+config_class, model_encoder, tokenizer_class = MODEL_CLASSES[model_type]
+config = config_class.from_pretrained(encoder_name_or_path)
 
-encoder_path = os_path_join(args.exp_name, 'encoder.pkl')
-model_path = os_path_join(args.exp_name, 'model.pkl')
+exp_name: str = args.exp_name
+encoder_path: str = os_path_join(exp_name, 'encoder.pkl')
+model_path: str = os_path_join(exp_name, 'model.pkl')
 logger.info("Loading encoder from: {}".format(encoder_path))
 logger.info("Loading model from: {}".format(model_path))
 
-encoder, _ = load_encoder_model(args.encoder_name_or_path, args.model_type)
+encoder, _ = load_encoder_model(encoder_name_or_path, model_type)
 model = HierarchicalGraphNetwork(config=args)
 
 if encoder_path is not None:
@@ -63,8 +66,9 @@ if encoder_path is not None:
 if model_path is not None:
     model.load_state_dict(torch_load(model_path))
 
-encoder.to(args.device)
-model.to(args.device)
+device = args.device
+encoder.to(device)
+model.to(device)
 
 encoder.eval()
 model.eval()
@@ -72,8 +76,8 @@ model.eval()
 #########################################################################
 # Evaluation
 ##########################################################################
-output_pred_file = os_path_join(args.exp_name, 'pred.json')
-output_eval_file = os_path_join(args.exp_name, 'eval.txt')
+output_pred_file: str = os_path_join(exp_name, 'pred.json')
+output_eval_file: str = os_path_join(exp_name, 'eval.txt')
 
 metrics, threshold = eval_model(args, encoder, model,
                                 dev_dataloader, dev_example_dict, dev_feature_dict,

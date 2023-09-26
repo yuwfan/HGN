@@ -35,22 +35,29 @@ def tok_to_ent(tok2ent):
 class MLP(Module):
     def __init__(self, input_sizes, dropout_prob=0.2, bias=False):
         super(MLP, self).__init__()
-        self.layers = ModuleList()
+        layers = ModuleList()
         for i in range(1, len(input_sizes)):
-            self.layers.append(Linear(input_sizes[i - 1], input_sizes[i], bias=bias))
-        self.norm_layers = ModuleList()
+            layers.append(Linear(input_sizes[i - 1], input_sizes[i], bias=bias))
+        self.layers = layers
+        norm_layers = ModuleList()
         if len(input_sizes) > 2:
             for i in range(1, len(input_sizes) - 1):
-                self.norm_layers.append(LayerNorm(input_sizes[i]))
+                norm_layers.append(LayerNorm(input_sizes[i]))
+        self.norm_layers = norm_layers
         self.drop_out = Dropout(p=dropout_prob)
 
     def forward(self, x):
-        for i, layer in enumerate(self.layers):
-            x = layer(self.drop_out(x))
-            if i < len(self.layers) - 1:
+        drop_out = self.drop_out
+        layers = self.layers
+        len_layers_1 = len(layers) - 1
+        norm_layers = self.norm_layers
+        len_norm_layers = len(norm_layers)
+        for i, layer in enumerate(layers):
+            x = layer(drop_out(x))
+            if i < len_layers_1:
                 x = gelu(x)
-                if len(self.norm_layers):
-                    x = self.norm_layers[i](x)
+                if len_norm_layers:
+                    x = norm_layers[i](x)
         return x
 
 
@@ -96,61 +103,70 @@ class LayerNorm(Module):
 
     def forward(self, x):
         u = x.mean(-1, keepdim=True)
-        s = (x - u).pow(2).mean(-1, keepdim=True)
-        x = (x - u) / torch_sqrt(s + self.variance_epsilon)
+        x_u = x - u
+        s = x_u.pow(2).mean(-1, keepdim=True)
+        x = x_u / torch_sqrt(s + self.variance_epsilon)
         return self.weight * x + self.bias
 
 class GATSelfAttention(Module):
     def __init__(self, in_dim, out_dim, config, q_attn=False, head_id=0):
         """ One head GAT """
         super(GATSelfAttention, self).__init__()
-        self.config = config
-        self.in_dim = in_dim
-        self.out_dim = out_dim
-        self.dropout = self.config.gnn_drop
+        self.dropout = config.gnn_drop
         self.q_attn = q_attn
-        self.query_dim = in_dim
-        self.n_type = self.config.num_edge_type
-
-        self.head_id = head_id
+        self.n_type = n_type = config.num_edge_type
+        input_dim = config.input_dim
+        hidden_dim = config.hidden_dim
         self.step = 0
+        q_update = config.q_update
 
-        self.W_type = ParameterList()
-        self.a_type = ParameterList()
-        self.qattn_W1 = ParameterList()
-        self.qattn_W2 = ParameterList()
-        for i in range(self.n_type):
-            self.W_type.append(get_weights((in_dim, out_dim)))
-            self.a_type.append(get_weights((out_dim * 2, 1)))
+        W_type = ParameterList()
+        a_type = ParameterList()
+        qattn_W1 = ParameterList()
+        qattn_W2 = ParameterList()
+        for _ in range(n_type):
+            W_type.append(get_weights((in_dim, out_dim)))
+            a_type.append(get_weights((out_dim * 2, 1)))
 
-            if self.q_attn:
-                q_dim = self.config.hidden_dim if self.config.q_update else self.config.input_dim
-                self.qattn_W1.append(get_weights((q_dim, out_dim * 2)))
-                self.qattn_W2.append(get_weights((out_dim * 2, out_dim * 2)))
+            if q_attn:
+                q_dim = hidden_dim if q_update else input_dim
+                qattn_W1.append(get_weights((q_dim, out_dim * 2)))
+                qattn_W2.append(get_weights((out_dim * 2, out_dim * 2)))
 
+        self.W_type = W_type
+        self.a_type = a_type
+        self.qattn_W1 = qattn_W1
+        self.qattn_W2 = qattn_W2
         self.act = get_act('lrelu:0.2')
 
     def forward(self, input_state, adj, node_mask=None, query_vec=None):
+        size = adj.size()
+        dtype = adj.dtype
+        device = adj.device
         zero_vec = torch_zeros_like(adj)
         scores = torch_zeros_like(adj)
-
+        dropout = self.dropout
+        training: bool = self.training
+        q_attn: bool = self.q_attn
+        W_type = self.W_type
+        qattn_W1 = self.qattn_W1
+        qattn_W2 = self.qattn_W2
+        a_type = self.a_type
+        act = self.act
         for i in range(self.n_type):
-            h = torch_matmul(input_state, self.W_type[i])
-            h = F_dropout(h, self.dropout, self.training)
+            h = torch_matmul(input_state, W_type[i])
+            h = F_dropout(h, dropout, training)
             N, E, d = h.shape
 
             a_input = torch_cat([h.repeat(1, 1, E).view(N, E * E, -1), h.repeat(1, E, 1)], dim=-1)
             a_input = a_input.view(-1, E, E, 2*d)
 
-            if self.q_attn:
-                q_gate = F_relu(torch_matmul(query_vec, self.qattn_W1[i]))
-                q_gate = torch_sigmoid(torch_matmul(q_gate, self.qattn_W2[i]))
+            if q_attn:
+                q_gate = F_relu(torch_matmul(query_vec, qattn_W1[i]))
+                q_gate = torch_sigmoid(torch_matmul(q_gate, qattn_W2[i]))
                 a_input = a_input * q_gate[:, None, None, :]
-                score = self.act(torch_matmul(a_input, self.a_type[i]).squeeze(3))
-            else:
-                score = self.act(torch_matmul(a_input, self.a_type[i]).squeeze(3))
-
-            scores += torch_where(adj == i+1, score, zero_vec.to(score.dtype))
+            score = act(torch_matmul(a_input, a_type[i]).squeeze(3))
+            score += torch_where(adj == i+1, score, zero_vec.to(score.dtype))
 
         zero_vec = -1e30 * torch_ones_like(scores)
         scores = torch_where(adj > 0, scores, zero_vec.to(scores.dtype))
@@ -205,8 +221,9 @@ class BertLayerNorm(Module):
 
     def forward(self, x):
         u = x.mean(-1, keepdim=True)
-        s = (x - u).pow(2).mean(-1, keepdim=True)
-        x = (x - u) / torch_sqrt(s + self.variance_epsilon)
+        x_u = x - u
+        s = x_u.pow(2).mean(-1, keepdim=True)
+        x = x_u / torch_sqrt(s + self.variance_epsilon)
         return self.weight * x + self.bias
 
 
@@ -228,22 +245,21 @@ class OutputLayer(Module):
 class GraphBlock(Module):
     def __init__(self, q_attn, config):
         super(GraphBlock, self).__init__()
-        self.config = config
-        self.hidden_dim = config.hidden_dim
+        self.device = config.device
+        self.hidden_dim = hidden_dim = config.hidden_dim
+        self.q_update = q_update = config.q_updateq_update
+        input_dim = config.input_dim
 
-        if self.config.q_update:
-            self.gat_linear = Linear(self.hidden_dim*2, self.hidden_dim)
+        if q_update:
+            self.gat_linear = Linear(hidden_dim*2, hidden_dim)
+            self.gat = AttentionLayer(hidden_dim, hidden_dim, config.num_gnn_heads, q_attn=q_attn, config=config)
+            self.sent_mlp = OutputLayer(hidden_dim, config, num_answer=1)
+            self.entity_mlp = OutputLayer(hidden_dim, config, num_answer=1)
         else:
-            self.gat_linear = Linear(self.config.input_dim, self.hidden_dim*2)
-
-        if self.config.q_update:
-            self.gat = AttentionLayer(self.hidden_dim, self.hidden_dim, config.num_gnn_heads, q_attn=q_attn, config=self.config)
-            self.sent_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
-            self.entity_mlp = OutputLayer(self.hidden_dim, config, num_answer=1)
-        else:
-            self.gat = AttentionLayer(self.hidden_dim*2, self.hidden_dim*2, config.num_gnn_heads, q_attn=q_attn, config=self.config)
-            self.sent_mlp = OutputLayer(self.hidden_dim*2, config, num_answer=1)
-            self.entity_mlp = OutputLayer(self.hidden_dim*2, config, num_answer=1)
+            self.gat_linear = Linear(input_dim, hidden_dim*2)
+            self.gat = AttentionLayer(hidden_dim*2, hidden_dim*2, config.num_gnn_heads, q_attn=q_attn, config=config)
+            self.sent_mlp = OutputLayer(hidden_dim*2, config, num_answer=1)
+            self.entity_mlp = OutputLayer(hidden_dim*2, config, num_answer=1)
 
     def forward(self, batch, input_state, query_vec):
         context_lens = batch['context_lens']
@@ -258,37 +274,33 @@ class GraphBlock(Module):
         ent_start_mapping = batch['ent_start_mapping']
         ent_end_mapping = batch['ent_end_mapping']
 
-        def get_span_pooled_vec(state_input, mapping):
-            mapping_state = state_input.unsqueeze(2) * mapping.unsqueeze(3)
-            mapping_sum = mapping.sum(dim=1)
-            mapping_sum = torch_where(mapping_sum == 0, torch_ones_like(mapping_sum), mapping_sum)
-            mean_pooled = mapping_state.sum(dim=1) / mapping_sum.unsqueeze(-1)
+        hidden_dim = self.hidden_dim
 
-            return mean_pooled
-
-        para_start_output = torch_bmm(para_start_mapping, input_state[:, :, self.hidden_dim:])   # N x max_para x d
-        para_end_output = torch_bmm(para_end_mapping, input_state[:, :, :self.hidden_dim])       # N x max_para x d
+        input_state_first = input_state[:, :, hidden_dim:]
+        input_state_second = input_state[:, :, :hidden_dim]
+        para_start_output = torch_bmm(para_start_mapping, input_state_first)   # N x max_para x d
+        para_end_output = torch_bmm(para_end_mapping, input_state_second)       # N x max_para x d
         para_state = torch_cat([para_start_output, para_end_output], dim=-1)  # N x max_para x 2d
 
-        sent_start_output = torch_bmm(sent_start_mapping, input_state[:, :, self.hidden_dim:])   # N x max_sent x d
-        sent_end_output = torch_bmm(sent_end_mapping, input_state[:, :, :self.hidden_dim])       # N x max_sent x d
+        sent_start_output = torch_bmm(sent_start_mapping, input_state_first)   # N x max_sent x d
+        sent_end_output = torch_bmm(sent_end_mapping, input_state_second)       # N x max_sent x d
         sent_state = torch_cat([sent_start_output, sent_end_output], dim=-1)  # N x max_sent x 2d
 
-        ent_start_output = torch_bmm(ent_start_mapping, input_state[:, :, self.hidden_dim:])   # N x max_ent x d
-        ent_end_output = torch_bmm(ent_end_mapping, input_state[:, :, :self.hidden_dim])       # N x max_ent x d
+        ent_start_output = torch_bmm(ent_start_mapping, input_state_first)   # N x max_ent x d
+        ent_end_output = torch_bmm(ent_end_mapping, input_state_second)       # N x max_ent x d
         ent_state = torch_cat([ent_start_output, ent_end_output], dim=-1)  # N x max_ent x 2d
 
         N, max_para_num, _ = para_state.size()
         _, max_sent_num, _ = sent_state.size()
         _, max_ent_num, _ = ent_state.size()
 
-        if self.config.q_update:
+        if self.q_update:
             graph_state = self.gat_linear(torch_cat([para_state, sent_state, ent_state], dim=1)) # N * (max_para + max_sent + max_ent) * d
             graph_state = torch_cat([query_vec.unsqueeze(1), graph_state], dim=1)
         else:
             graph_state = self.gat_linear(query_vec)
             graph_state = torch_cat([graph_state.unsqueeze(1), para_state, sent_state, ent_state], dim=1)
-        node_mask = torch_cat([torch_ones(N, 1).to(self.config.device), batch['para_mask'], batch['sent_mask'], batch['ent_mask']], dim=-1).unsqueeze(-1)
+        node_mask = torch_cat([torch_ones(N, 1, device=self.device), batch['para_mask'], batch['sent_mask'], batch['ent_mask']], dim=-1).unsqueeze(-1)
 
         graph_adj = batch['graphs']
         assert graph_adj.size(1) == node_mask.size(1)
@@ -345,19 +357,21 @@ class GatedAttention(Module):
         weight_one = F_softmax(att, dim=-1)
         output_one = torch_bmm(weight_one, memory)
 
-        if self.gate_method == 'no_gate':
+        gate_method = self.gate_method
+        input_linear_2 = self.input_linear_2
+        if gate_method == 'no_gate':
             output = torch_cat( [input, output_one], dim=-1 )
-            output = F_relu(self.input_linear_2(output))
-        elif self.gate_method == 'gate_att_or':
+            output = F_relu(input_linear_2(output))
+        elif gate_method == 'gate_att_or':
             output = torch_cat( [input, input - output_one], dim=-1)
-            output = F_relu(self.input_linear_2(output))
-        elif self.gate_method == 'gate_att_up':
+            output = F_relu(input_linear_2(output))
+        elif gate_method == 'gate_att_up':
             output = torch_cat([input, output_one], dim=-1 )
-            gate_sg = torch_sigmoid(self.input_linear_2(output))
-            gate_th = torch_tanh(self.input_linear_2(output))
+            gate_sg = torch_sigmoid(input_linear_2(output))
+            gate_th = torch_tanh(input_linear_2(output))
             output = gate_sg * gate_th
         else:
-            raise ValueError("Not support gate method: {}".format(self.gate_method))
+            raise ValueError("Not support gate method: {}".format(gate_method))
 
 
         return output, memory
@@ -384,8 +398,10 @@ class BiAttention(Module):
         """
         bsz, input_len, memory_len = input.size(0), input.size(1), memory.size(1)
 
-        input = F_dropout(input, self.dropout, training=self.training)  # N x Ld x d
-        memory = F_dropout(memory, self.dropout, training=self.training)  # N x Lm x d
+        training = self.training
+        dropout = self.dropout
+        input = F_dropout(input, dropout, training=training)  # N x Ld x d
+        memory = F_dropout(memory, dropout, training=training)  # N x Lm x d
 
         input_dot = self.input_linear_1(input)  # N x Ld x 1
         memory_dot = self.memory_linear_1(memory).view(bsz, 1, memory_len)  # N x 1 x Lm
@@ -434,13 +450,16 @@ class LSTMWrapper(Module):
         if input_lengths is not None:
             lens = input_lengths.data.cpu().numpy()
 
+        training: bool = self.training
+        rnns = self.rnns
+        dropout: float = self.dropout
         for i in range(self.n_layer):
-            output = F_dropout(output, p=self.dropout, training=self.training)
+            output: Tensor = F_dropout(output, p=dropout, training=training)
 
             if input_lengths is not None:
                 output = pack_padded_sequence(output, lens, batch_first=True)
 
-            output, _ = self.rnns[i](output)
+            output, _ = rnns[i](output)
 
             if input_lengths is not None:
                 output, _ = pad_packed_sequence(output, batch_first=True)
@@ -484,13 +503,9 @@ class PredictionLayer(Module):
 
     def forward(self, batch, context_input, sent_logits, ing_mask=None, return_yp=False):
         context_mask = batch['context_mask']
-        context_lens = batch['context_lens']
-        sent_mapping = batch['sent_mapping']
-
-        sp_forward = torch_bmm(sent_mapping, sent_logits).contiguous()  # N x max_seq_len x 1
-
-        start_prediction = self.start_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
-        end_prediction = self.end_linear(context_input).squeeze(2) - 1e30 * (1 - context_mask)  # N x L
+        inverse_context_mask = 1e30 * (1 - context_mask)
+        start_prediction = self.start_linear(context_input).squeeze(2) - inverse_context_mask  # N x L
+        end_prediction = self.end_linear(context_input).squeeze(2) - inverse_context_mask  # N x L
         type_prediction = self.type_linear(context_input[:, 0, :])
 
         if not return_yp:
