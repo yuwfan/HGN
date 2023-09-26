@@ -13,7 +13,7 @@ from torch import (
 from torch.nn import CrossEntropyLoss, Parameter, ReLU, LeakyReLU, BCEWithLogitsLoss
 from torch.nn.functional import softmax as F_softmax
 from torch.nn.init import xavier_uniform_
-from transformers.tokenization_bert import BasicTokenizer
+from transformers.models.bert.tokenization_bert import BasicTokenizer
 from transformers import AdamW
 from model_envs import MODEL_CLASSES
 from eval.hotpot_evaluate_v1 import eval as hotpot_eval
