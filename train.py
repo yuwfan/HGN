@@ -151,7 +151,7 @@ disable_tqdm: bool = not main_thread
 max_grad_norm: float = args.max_grad_norm
 logging_steps: int = args.logging_steps
 use_segment_idxs: bool = model_type in ['bert', 'xlnet']
-train_iterator: tqdm[int] = trange(start_epoch, start_epoch+int(num_train_epochs), desc="Epoch", disable=disable_tqdm)
+train_iterator = trange(start_epoch, start_epoch+int(num_train_epochs), desc="Epoch", disable=disable_tqdm)
 n_gpu: int = args.n_gpu
 for epoch in train_iterator:
     epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=disable_tqdm)
