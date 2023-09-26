@@ -282,8 +282,10 @@ class DataIteratorPack(object):
                 ans_type = case.ans_type
                 if ans_type == 0 or ans_type == 3:
                     end_position = case.end_position
-                    end_position_0 = end_position[0]
-                    if len(end_position) == 0:
+                    len_end_position = len(end_position)
+                    if len_end_position > 0:
+                        end_position_0 = end_position[0]
+                    if len_end_position == 0:
                         y1[i] = y2[i] = 0
                     elif end_position_0 < max_seq_length and context_mask[i][end_position_0+1] == 1: # "[SEP]" is the last token
                         y1[i] = case.start_position[0]
