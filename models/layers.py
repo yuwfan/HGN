@@ -20,8 +20,11 @@ from torch.nn.functional import relu as F_relu, dropout as F_dropout, softmax as
 from torch.nn.init import xavier_uniform_
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from torch.autograd import Variable
-from transformers.modeling_bert import gelu
+from transformers.activations import ACT2FN
 from csr_mhqa.utils import get_weights, get_act
+
+
+gelu = ACT2FN['gelu']
 
 
 def tok_to_ent(tok2ent):
