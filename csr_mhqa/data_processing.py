@@ -1,4 +1,4 @@
-from os.path import os_path_join as os_path_join
+from os.path import join as os_path_join
 from gzip import open as gzip_open
 from pickle import load as pickle_load
 from torch import (
