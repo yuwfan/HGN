@@ -307,6 +307,7 @@ class DataIteratorPack(object):
 
                 qas_id = case.qas_id
                 tmp_graph = graph_dict[qas_id]
+                graph_adj = torch_from_numpy(tmp_graph['adj']).to(device)
                 for k in range(graph_adj.size(0)):
                     graph_adj[k, k] = 8
                 for edge_type in mask_edge_types:
