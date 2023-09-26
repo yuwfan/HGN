@@ -1,5 +1,5 @@
 from json import dump as json_dump
-from os.path import exists as os_path_exists, is_file as os_path_isfile, join as os_path_join, dirname as os_path_dirname
+from os.path import exists as os_path_exists, isfile as os_path_isfile, join as os_path_join, dirname as os_path_dirname
 from shutil import move as shutil_move
 from collections import OrderedDict
 from logging import getLogger
