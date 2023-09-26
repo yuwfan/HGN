@@ -182,34 +182,34 @@ class DataIteratorPack(object):
         segment_idxs = torch_LongTensor(bsz, max_seq_length)
 
         # Mappings
-        query_mapping = torch_Tensor(bsz, max_seq_length).cuda(device)
-        para_start_mapping = torch_Tensor(bsz, para_limit, max_seq_length).cuda(device)
-        para_end_mapping = torch_Tensor(bsz, para_limit, max_seq_length).cuda(device)
-        para_mapping = torch_Tensor(bsz, max_seq_length, para_limit).cuda(device)
-        sent_start_mapping = torch_Tensor(bsz, sent_limit, max_seq_length).cuda(device)
-        sent_end_mapping = torch_Tensor(bsz, sent_limit, max_seq_length).cuda(device)
-        sent_mapping = torch_Tensor(bsz, max_seq_length, sent_limit).cuda(device)
-        ent_start_mapping = torch_Tensor(bsz, ent_limit, max_seq_length).cuda(device)
-        ent_end_mapping = torch_Tensor(bsz, ent_limit, max_seq_length).cuda(device)
-        ent_mapping = torch_Tensor(bsz, max_seq_length, ent_limit).cuda(device)
+        query_mapping = torch_Tensor(bsz, max_seq_length, device=device)
+        para_start_mapping = torch_Tensor(bsz, para_limit, max_seq_length, device=device)
+        para_end_mapping = torch_Tensor(bsz, para_limit, max_seq_length, device=device)
+        para_mapping = torch_Tensor(bsz, max_seq_length, para_limit, device=device)
+        sent_start_mapping = torch_Tensor(bsz, sent_limit, max_seq_length, device=device)
+        sent_end_mapping = torch_Tensor(bsz, sent_limit, max_seq_length, device=device)
+        sent_mapping = torch_Tensor(bsz, max_seq_length, sent_limit, device=device)
+        ent_start_mapping = torch_Tensor(bsz, ent_limit, max_seq_length, device=device)
+        ent_end_mapping = torch_Tensor(bsz, ent_limit, max_seq_length, device=device)
+        ent_mapping = torch_Tensor(bsz, max_seq_length, ent_limit, device=device)
 
         # Mask
-        para_mask = torch_FloatTensor(bsz, para_limit).cuda(device)
-        sent_mask = torch_FloatTensor(bsz, sent_limit).cuda(device)
-        ent_mask = torch_FloatTensor(bsz, ent_limit).cuda(device)
-        ans_cand_mask = torch_FloatTensor(bsz, ent_limit).cuda(device)
+        para_mask = torch_FloatTensor(bsz, para_limit, device=device)
+        sent_mask = torch_FloatTensor(bsz, sent_limit, device=device)
+        ent_mask = torch_FloatTensor(bsz, ent_limit, device=device)
+        ans_cand_mask = torch_FloatTensor(bsz, ent_limit, device=device)
 
         # Label tensor
-        y1 = torch_LongTensor(bsz).cuda(device)
-        y2 = torch_LongTensor(bsz).cuda(device)
-        q_type = torch_LongTensor(bsz).cuda(device)
-        is_support = torch_FloatTensor(bsz, sent_limit).cuda(device)
-        is_gold_para = torch_FloatTensor(bsz, para_limit).cuda(device)
-        is_gold_ent = torch_FloatTensor(bsz).cuda(device)
+        y1 = torch_LongTensor(bsz, device=device)
+        y2 = torch_LongTensor(bsz, device=device)
+        q_type = torch_LongTensor(bsz, device=device)
+        is_support = torch_FloatTensor(bsz, sent_limit, device=device)
+        is_gold_para = torch_FloatTensor(bsz, para_limit, device=device)
+        is_gold_ent = torch_FloatTensor(bsz, device=device)
 
         # Graph related
         graph_nodes_num: int = self.graph_nodes_num
-        graphs = torch_Tensor(bsz, graph_nodes_num, graph_nodes_num).cuda(device)
+        graphs = torch_Tensor(bsz, graph_nodes_num, graph_nodes_num, device=device)
         features = self.features
         len_features: int = len(features)
         mask_edge_types = self.mask_edge_types
