@@ -3,8 +3,10 @@ from re import sub as re_sub
 from string import punctuation
 from collections import Counter
 from ujson import load as ujson_load
+
+
 EXCLUDE = set(punctuation)
-ZERO_METRIC: tuple[Literal[0], Literal[0], Literal[0]] = (0.0, 0.0, 0.0)
+ZERO_METRIC = (0.0, 0.0, 0.0)
 
 def normalize_answer(s):
 
