@@ -307,7 +307,7 @@ class DataIteratorPack(object):
                 tmp_graph = graph_dict[qas_id]
                 for k in range(graph_adj.size(0)):
                     graph_adj[k, k] = 8
-                for edge_type in self.mask_edge_types:
+                for edge_type in mask_edge_types:
                     graph_adj = torch_where(graph_adj == edge_type, torch_zeros_like(graph_adj), graph_adj)
                 graphs[i] = graph_adj
 
