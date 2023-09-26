@@ -504,7 +504,7 @@ class PredictionLayer(Module):
         self.cache_mask = outer.data.new(S, S).copy_(torch_from_numpy(np_mask))
         return Variable(self.cache_mask, requires_grad=False)
 
-    def forward(self, batch, context_input, sent_logits, ing_mask=None, return_yp=False):
+    def forward(self, batch, context_input, sent_logits, packing_mask=None, return_yp=False):
         context_mask = batch['context_mask']
         inverse_context_mask = 1e30 * (1 - context_mask)
         start_prediction = self.start_linear(context_input).squeeze(2) - inverse_context_mask  # N x L
@@ -517,8 +517,8 @@ class PredictionLayer(Module):
         outer = start_prediction[:, :, None] + end_prediction[:, None]
         outer_mask = self.get_output_mask(outer)
         outer = outer - 1e30 * (1 - outer_mask[None].expand_as(outer))
-        if ing_mask is not None:
-            outer = outer - 1e30 * ing_mask[:, :, None]
+        if packing_mask is not None:
+            outer = outer - 1e30 * packing_mask[:, :, None]
         # yp1: start
         # yp2: end
         yp1 = outer.max(dim=2)[0].max(dim=1)[1]
