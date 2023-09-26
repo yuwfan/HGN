@@ -71,6 +71,8 @@ def update_sp(metrics, prediction, gold):
     for e in gold_sp_pred:
         if e not in cur_sp_pred:
             fn += 1
+    prec: float = 1.0 * tp / (tp + fp) if tp + fp > 0 else 0.0
+    recall: float = 1.0 * tp / (tp + fn) if tp + fn > 0 else 0.0
     prec_recall: float = prec + recall
     f1: float = 2 * prec * recall / prec_recall if prec_recall > 0 else 0.0
     em = 1.0 if fp + fn == 0 else 0.0
