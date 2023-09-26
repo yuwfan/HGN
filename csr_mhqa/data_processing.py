@@ -2,9 +2,9 @@ from os.path import join as os_path_join
 from gzip import open as gzip_open
 from pickle import load as pickle_load
 from torch import (
-    Tensor as torch_Tensor,
-    LongTensor as torch_LongTensor,
-    FloatTensor as torch_FloatTensor,
+    tensor as torch_tensor,
+    int64 as torch_int64,
+    float32 as torch_float32,
     zeros_like as torch_zeros_like,
     from_numpy as torch_from_numpy,
     where as torch_where,
@@ -177,39 +177,39 @@ class DataIteratorPack(object):
         ent_limit = self.ent_limit
 
         # BERT input
-        context_idxs = torch_LongTensor(bsz, max_seq_length)
-        context_mask = torch_LongTensor(bsz, max_seq_length)
-        segment_idxs = torch_LongTensor(bsz, max_seq_length)
+        context_idxs = torch_tensor(bsz, max_seq_length, dtype=torch_int64)
+        context_mask = torch_tensor(bsz, max_seq_length, dtype=torch_int64)
+        segment_idxs = torch_tensor(bsz, max_seq_length, dtype=torch_int64)
 
         # Mappings
-        query_mapping = torch_Tensor(bsz, max_seq_length, device=device)
-        para_start_mapping = torch_Tensor(bsz, para_limit, max_seq_length, device=device)
-        para_end_mapping = torch_Tensor(bsz, para_limit, max_seq_length, device=device)
-        para_mapping = torch_Tensor(bsz, max_seq_length, para_limit, device=device)
-        sent_start_mapping = torch_Tensor(bsz, sent_limit, max_seq_length, device=device)
-        sent_end_mapping = torch_Tensor(bsz, sent_limit, max_seq_length, device=device)
-        sent_mapping = torch_Tensor(bsz, max_seq_length, sent_limit, device=device)
-        ent_start_mapping = torch_Tensor(bsz, ent_limit, max_seq_length, device=device)
-        ent_end_mapping = torch_Tensor(bsz, ent_limit, max_seq_length, device=device)
-        ent_mapping = torch_Tensor(bsz, max_seq_length, ent_limit, device=device)
+        query_mapping = torch_tensor(bsz, max_seq_length, device=device)
+        para_start_mapping = torch_tensor(bsz, para_limit, max_seq_length, device=device)
+        para_end_mapping = torch_tensor(bsz, para_limit, max_seq_length, device=device)
+        para_mapping = torch_tensor(bsz, max_seq_length, para_limit, device=device)
+        sent_start_mapping = torch_tensor(bsz, sent_limit, max_seq_length, device=device)
+        sent_end_mapping = torch_tensor(bsz, sent_limit, max_seq_length, device=device)
+        sent_mapping = torch_tensor(bsz, max_seq_length, sent_limit, device=device)
+        ent_start_mapping = torch_tensor(bsz, ent_limit, max_seq_length, device=device)
+        ent_end_mapping = torch_tensor(bsz, ent_limit, max_seq_length, device=device)
+        ent_mapping = torch_tensor(bsz, max_seq_length, ent_limit, device=device)
 
         # Mask
-        para_mask = torch_FloatTensor(bsz, para_limit, device=device)
-        sent_mask = torch_FloatTensor(bsz, sent_limit, device=device)
-        ent_mask = torch_FloatTensor(bsz, ent_limit, device=device)
-        ans_cand_mask = torch_FloatTensor(bsz, ent_limit, device=device)
+        para_mask = torch_tensor(bsz, para_limit, device=device, dtype=torch_float32)
+        sent_mask = torch_tensor(bsz, sent_limit, device=device, dtype=torch_float32)
+        ent_mask = torch_tensor(bsz, ent_limit, device=device, dtype=torch_float32)
+        ans_cand_mask = torch_tensor(bsz, ent_limit, device=device, dtype=torch_float32)
 
         # Label tensor
-        y1 = torch_LongTensor(bsz, device=device)
-        y2 = torch_LongTensor(bsz, device=device)
-        q_type = torch_LongTensor(bsz, device=device)
-        is_support = torch_FloatTensor(bsz, sent_limit, device=device)
-        is_gold_para = torch_FloatTensor(bsz, para_limit, device=device)
-        is_gold_ent = torch_FloatTensor(bsz, device=device)
+        y1 = torch_tensor(bsz, device=device, dtype=torch_int64)
+        y2 = torch_tensor(bsz, device=device, dtype=torch_int64)
+        q_type = torch_tensor(bsz, device=device, dtype=torch_int64)
+        is_support = torch_tensor(bsz, sent_limit, device=device, dtype=torch_float32)
+        is_gold_para = torch_tensor(bsz, para_limit, device=device, dtype=torch_float32)
+        is_gold_ent = torch_tensor(bsz, device=device, dtype=torch_float32)
 
         # Graph related
         graph_nodes_num: int = self.graph_nodes_num
-        graphs = torch_Tensor(bsz, graph_nodes_num, graph_nodes_num, device=device)
+        graphs = torch_tensor(bsz, graph_nodes_num, graph_nodes_num, device=device)
         features = self.features
         len_features: int = len(features)
         mask_edge_types = self.mask_edge_types
@@ -235,9 +235,9 @@ class DataIteratorPack(object):
 
             for i in range(len(cur_batch)):
                 case = cur_batch[i]
-                context_idxs[i].copy_(torch_Tensor(case.doc_input_ids))
-                context_mask[i].copy_(torch_Tensor(case.doc_input_mask))
-                segment_idxs[i].copy_(torch_Tensor(case.doc_segment_ids))
+                context_idxs[i].copy_(torch_tensor(case.doc_input_ids))
+                context_mask[i].copy_(torch_tensor(case.doc_input_mask))
+                segment_idxs[i].copy_(torch_tensor(case.doc_segment_ids))
 
                 sent_spans = case.sent_spans
                 if len(sent_spans) > 0:

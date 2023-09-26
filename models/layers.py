@@ -457,7 +457,7 @@ class LSTMWrapper(Module):
         rnns = self.rnns
         dropout: float = self.dropout
         for i in range(self.n_layer):
-            output: Tensor = F_dropout(output, p=dropout, training=training)
+            output = F_dropout(output, p=dropout, training=training)
 
             if input_lengths is not None:
                 output = pack_padded_sequence(output, lens, batch_first=True)
