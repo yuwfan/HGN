@@ -11,7 +11,7 @@ from torch import (
     bmm as torch_bmm,
     matmul as torch_matmul,
     sigmoid as torch_sigmoid,
-    tahn as torch_tanh,
+    tanh as torch_tanh,
     where as torch_where,
     from_numpy as torch_from_numpy,
 )
